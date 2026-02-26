@@ -42,7 +42,7 @@ Database migrations run automatically on first start. The stack is ready in ~60 
 | Loki API | http://localhost:3100 |
 | Grafana | http://localhost:3001 |
 
-**Default admin:** `admin@signalforge.local` / `admin123`
+**Default admin:** `admin` / `admin123`
 
 ### 4. Load sample data (optional)
 
@@ -57,7 +57,7 @@ This seeds a sample operator account and two example connector configurations (I
 | Service | Technology | Purpose |
 |---------|-----------|---------|
 | `nginx` | nginx 1.27 | Reverse proxy — `/api/*` → backend, `/` → frontend |
-| `frontend` | React 18 + Vite | Admin and operator portals |
+| `frontend` | React 18 + Vite + D3.js | Admin and operator portals |
 | `backend` | FastAPI + SQLAlchemy | REST API + auth + connector management |
 | `signal-service` | Python + APScheduler | Alarm ingestion engine + ISA-18.2 analysis jobs |
 | `postgres` | PostgreSQL 16 | Connector configs, alarm metadata, user accounts |
@@ -89,6 +89,38 @@ This seeds a sample operator account and two example connector configurations (I
 ```
 
 **Data flow:** SCADA system → signal-service connector → normalizer → Loki push API → queryable via backend API or Grafana.
+
+## Frontend Features
+
+### Dashboard
+
+The home page visualises the full signal pipeline as a live status board:
+
+- **Pipeline flow diagram** — four stage boxes (SCADA Sources → Signal Service → Loki → Grafana) with per-service health indicators derived from the `/api/health` endpoint
+- **Alarm rate chart** — D3.js area chart showing hourly alarm ingest over the last 24 hours, sourced from Loki metric queries
+- **Severity donut** — D3.js donut chart breaking alarm volume down by critical / high / medium / low with a centre-total callout
+- **Stat strip** — quick-glance totals for alarms in the last hour and last 24 hours, active connector count, and overall system health
+
+### Alarm Transformation
+
+`/alarms/transform` lets you configure the per-connector field mapping before alarms are written to Loki:
+
+- **Vendor raw data table** — columns from the actual SCADA sample records; mapped columns are highlighted blue with their canonical target name shown below the header
+- **Mapping editor** — grouped by Core / Labels / Metadata; each canonical field has a dropdown listing every available raw field from the vendor's schema
+- **Live canonical preview** — runs entirely client-side via `useMemo` so the preview updates instantly as you change mappings, no server round-trip needed
+- **Save / Reset** — persists the mapping to `connector.label_mappings`; dirty-state tracking prevents accidental loss of unsaved changes
+- **Schema reference panel** — canonical field definitions and descriptions for quick reference while mapping
+
+### Connector Test
+
+From the connector detail page the **"Test Connection & Poll"** button:
+
+1. Opens a real TCP connection to the configured host:port and measures round-trip latency (5 s timeout)
+2. Runs a simulated data poll against vendor-specific sample records using the connector's current field mapping
+3. Expands an inline result panel showing:
+   - Connection success / failure with latency
+   - Raw vendor records (up to 3)
+   - Canonical Loki output after transformation, side-by-side
 
 ## Connector Plugin Architecture
 
@@ -182,7 +214,9 @@ All endpoints are prefixed with `/api`. Full Swagger documentation is available 
 | `GET` | `/api/connectors/{id}` | Get connector details |
 | `PATCH` | `/api/connectors/{id}` | Update connector config |
 | `DELETE` | `/api/connectors/{id}` | Delete a connector |
-| `POST` | `/api/connectors/{id}/test` | Test connector connection |
+| `POST` | `/api/connectors/{id}/test` | TCP test + simulated data poll |
+| `GET` | `/api/connectors/{id}/transform` | Get field mapping config and sample preview |
+| `PATCH` | `/api/connectors/{id}/transform` | Save field mapping to connector |
 
 ### Users (Admin)
 
@@ -201,6 +235,12 @@ All endpoints are prefixed with `/api`. Full Swagger documentation is available 
 | `GET` | `/api/alarms` | Query alarms via LogQL (params: `query`, `limit`, `start`, `end`) |
 | `GET` | `/api/alarms/labels` | Get available alarm label values |
 
+### Metrics
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/metrics/overview` | Hourly alarm rate (24 h), severity breakdown, connector stats |
+
 ### Health
 
 | Method | Endpoint | Description |
@@ -217,7 +257,7 @@ All configuration is via environment variables. See `.env.example` for the full 
 | `POSTGRES_PASSWORD` | `signalforge_dev` | PostgreSQL password |
 | `POSTGRES_DB` | `signalforge` | PostgreSQL database name |
 | `SECRET_KEY` | `change-me-in-production` | JWT signing key |
-| `ADMIN_EMAIL` | `admin@signalforge.local` | Default admin email |
+| `ADMIN_USERNAME` | `admin` | Default admin username |
 | `ADMIN_PASSWORD` | `admin123` | Default admin password |
 | `LOKI_URL` | `http://loki:3100` | Loki endpoint |
 | `GF_SECURITY_ADMIN_USER` | `admin` | Grafana admin username |
@@ -241,73 +281,81 @@ SignalForge/
 │   │   │   ├── router.py                   # Route aggregator
 │   │   │   ├── auth.py                     # JWT authentication
 │   │   │   ├── users.py                    # User CRUD
-│   │   │   ├── connectors.py              # Connector CRUD
-│   │   │   ├── alarms.py                  # Loki alarm queries
-│   │   │   └── health.py                  # Health checks
+│   │   │   ├── connectors.py               # Connector CRUD + TCP test
+│   │   │   ├── transform.py                # Field mapping config + sample data
+│   │   │   ├── alarms.py                   # Loki alarm queries
+│   │   │   ├── metrics.py                  # Dashboard metrics (alarm rate, severity)
+│   │   │   └── health.py                   # Health checks
 │   │   ├── core/
-│   │   │   ├── config.py                  # Pydantic settings
-│   │   │   ├── security.py               # JWT + bcrypt
-│   │   │   ├── database.py               # SQLAlchemy async
-│   │   │   └── loki.py                   # Loki HTTP client
-│   │   ├── models/                        # SQLAlchemy ORM models
-│   │   └── schemas/                       # Pydantic request/response schemas
+│   │   │   ├── config.py                   # Pydantic settings
+│   │   │   ├── security.py                 # JWT + bcrypt
+│   │   │   ├── database.py                 # SQLAlchemy async
+│   │   │   └── loki.py                     # Loki HTTP client (push + query)
+│   │   ├── models/                         # SQLAlchemy ORM models
+│   │   └── schemas/                        # Pydantic request/response schemas
 │   ├── migrations/
 │   │   └── versions/
-│   │       └── 001_initial_schema.py
+│   │       ├── 001_initial_schema.py
+│   │       └── 002_rename_email_to_username.py
 │   └── scripts/
 │       └── seed_sample_data.py
 ├── signal-service/
 │   ├── Dockerfile
-│   ├── main.py                            # APScheduler entry point
+│   ├── main.py                             # APScheduler entry point
 │   ├── config.py
 │   ├── connectors/
-│   │   ├── base.py                        # Abstract base connector
-│   │   ├── ignition.py                    # Ignition connector
-│   │   ├── factorytalk.py                # FactoryTalk stub
-│   │   ├── wincc.py                      # WinCC stub
-│   │   └── plant_scada.py               # Plant SCADA stub
+│   │   ├── base.py                         # Abstract base connector
+│   │   ├── ignition.py                     # Ignition connector
+│   │   ├── factorytalk.py                  # FactoryTalk stub
+│   │   ├── wincc.py                        # WinCC stub
+│   │   └── plant_scada.py                  # Plant SCADA stub
 │   ├── normalizer/
-│   │   ├── schema.py                     # Canonical alarm event schema
-│   │   └── transform.py                  # Vendor → canonical mapping
+│   │   ├── schema.py                       # Canonical alarm event schema
+│   │   └── transform.py                    # Vendor → canonical mapping
 │   ├── scheduler/
-│   │   ├── ingestion.py                  # Alarm ingestion job
-│   │   └── isa182_analysis.py            # ISA-18.2 KPI job
+│   │   ├── ingestion.py                    # Alarm ingestion job
+│   │   └── isa182_analysis.py              # ISA-18.2 KPI job
 │   └── analyzers/
-│       ├── isa182.py                     # ISA-18.2 KPI engine
-│       ├── chattering.py                 # Chattering detection
-│       ├── stale.py                      # Stale alarm detection
-│       ├── flooding.py                   # Flood detection
-│       └── distribution.py              # Priority distribution analysis
+│       ├── isa182.py                       # ISA-18.2 KPI engine
+│       ├── chattering.py                   # Chattering detection
+│       ├── stale.py                        # Stale alarm detection
+│       ├── flooding.py                     # Flood detection
+│       └── distribution.py                # Priority distribution analysis
 ├── frontend/
 │   ├── Dockerfile
 │   ├── package.json
 │   ├── vite.config.ts
 │   └── src/
-│       ├── App.tsx                        # Routes + protected route wrapper
-│       ├── lib/api.ts                     # Axios client + JWT interceptor
-│       ├── hooks/useAuth.ts               # Auth state management
+│       ├── App.tsx                         # Routes + protected route wrapper
+│       ├── lib/api.ts                      # Axios client + JWT interceptor
+│       ├── hooks/useAuth.ts                # Auth state management
 │       ├── components/
-│       │   └── Layout.tsx                 # Sidebar navigation layout
+│       │   ├── Layout.tsx                  # Sidebar navigation layout
+│       │   └── charts/
+│       │       ├── AlarmRateChart.tsx      # D3 area chart (24 h alarm rate)
+│       │       └── SeverityDonut.tsx       # D3 donut chart (severity breakdown)
 │       └── pages/
 │           ├── Login.tsx
+│           ├── Dashboard.tsx               # Pipeline status + D3 charts
+│           ├── AlarmTransform.tsx          # Field mapping editor + live preview
 │           └── admin/
-│               ├── Connectors.tsx         # Connector list + create
-│               ├── ConnectorDetail.tsx    # Edit, test, delete connector
-│               ├── Users.tsx             # User management
-│               └── Settings.tsx          # System health dashboard
+│               ├── Connectors.tsx          # Connector list + create
+│               ├── ConnectorDetail.tsx     # Edit, TCP test, delete connector
+│               ├── Users.tsx               # User management
+│               └── Settings.tsx            # System health dashboard
 ├── grafana/
 │   └── provisioning/
 │       └── datasources/
-│           └── loki.yml                  # Auto-provisioned Loki datasource
+│           └── loki.yml                    # Auto-provisioned Loki datasource
 └── loki/
-    └── loki-config.yml                   # Local filesystem storage config
+    └── loki-config.yml                     # Local filesystem storage config
 ```
 
 ## Development Roadmap
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| **Phase 1** | Docker Compose stack, backend API with auth & connector CRUD, frontend admin portal, Loki + Grafana | **Complete** |
+| **Phase 1** | Docker Compose stack, backend API with auth & connector CRUD, frontend admin portal, Loki + Grafana, D3 dashboard, alarm transformation UI, enhanced connector test | **Complete** |
 | **Phase 2** | Ignition connector implementation, normalizer pipeline, end-to-end alarm flow | Planned |
 | **Phase 3** | Operator UI — alarm dashboard, explorer (LogQL search), timeline visualization | Planned |
 | **Phase 4** | ISA-18.2 analysis engine — chattering, stale, flooding, distribution KPIs, compliance scorecard | Planned |

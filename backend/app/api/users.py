@@ -25,12 +25,12 @@ async def create_user(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_current_admin),
 ):
-    existing = await db.execute(select(User).where(User.email == user_in.email))
+    existing = await db.execute(select(User).where(User.username == user_in.username))
     if existing.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken")
 
     user = User(
-        email=user_in.email,
+        username=user_in.username,
         hashed_password=get_password_hash(user_in.password),
         full_name=user_in.full_name,
         role=user_in.role,

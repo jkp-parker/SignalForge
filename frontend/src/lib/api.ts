@@ -26,9 +26,9 @@ api.interceptors.response.use(
 
 // Auth
 export const authApi = {
-  login: (email: string, password: string) => {
+  login: (username: string, password: string) => {
     const formData = new URLSearchParams()
-    formData.append('username', email)
+    formData.append('username', username)
     formData.append('password', password)
     return api.post<{ access_token: string; token_type: string }>('/auth/token', formData, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -61,10 +61,23 @@ export const healthApi = {
   check: () => api.get<HealthStatus>('/health'),
 }
 
+// Metrics
+export const metricsApi = {
+  overview: () => api.get<MetricsOverview>('/metrics/overview'),
+}
+
+// Transform
+export const transformApi = {
+  getConfig: (connectorId: string) =>
+    api.get<TransformConfig>(`/connectors/${connectorId}/transform`),
+  save: (connectorId: string, mapping: FieldMapping) =>
+    api.patch(`/connectors/${connectorId}/transform`, { mapping }),
+}
+
 // Types
 export interface User {
   id: string
-  email: string
+  username: string
   full_name: string
   role: string
   is_active: boolean
@@ -73,7 +86,7 @@ export interface User {
 }
 
 export interface UserCreate {
-  email: string
+  username: string
   password: string
   full_name: string
   role: string
@@ -116,12 +129,84 @@ export interface ConnectorCreate {
 export interface ConnectorTestResult {
   success: boolean
   message: string
+  connection_ms: number | null
+  sample_records: Record<string, unknown>[] | null
+  normalized_preview: CanonicalEvent[] | null
+  note: string | null
 }
 
 export interface HealthStatus {
   status: string
   database: string
   loki: string
+}
+
+export interface FieldMapping {
+  timestamp_field?: string
+  message_field?: string
+  severity_field?: string
+  area_field?: string
+  equipment_field?: string
+  alarm_type_field?: string
+  state_field?: string
+  value_field?: string
+  threshold_field?: string
+  priority_field?: string
+  vendor_id_field?: string
+}
+
+export interface CanonicalEvent {
+  timestamp: string
+  message: string
+  labels: {
+    severity: string
+    area: string
+    equipment: string
+    alarm_type: string
+    isa_priority: string
+    source: string
+    connector_id: string
+  }
+  metadata: {
+    state: string
+    value: unknown
+    threshold: unknown
+    priority: unknown
+    vendor_alarm_id: string
+    ack_required: boolean
+    shelved: boolean
+  }
+}
+
+export interface TransformConfig {
+  connector_type: string
+  connector_name: string
+  sample_raw: Record<string, unknown>[]
+  mapping: FieldMapping
+  preview: CanonicalEvent[]
+  available_fields: string[]
+}
+
+export interface MetricsOverview {
+  alarm_rate: { time: number; count: number }[]
+  by_severity: { severity: string; count: number }[]
+  totals: { last_1h: number; last_24h: number }
+  connectors: {
+    total: number
+    connected: number
+    error: number
+    disconnected: number
+    connectors: {
+      id: string
+      name: string
+      connector_type: string
+      host: string
+      status: string
+      enabled: boolean
+      last_successful_pull: string | null
+      error_message: string | null
+    }[]
+  }
 }
 
 export default api

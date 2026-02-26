@@ -61,6 +61,23 @@ class LokiClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def query_metric(
+        self,
+        query: str,
+        start: str,
+        end: str,
+        step: int = 3600,
+    ) -> dict[str, Any]:
+        """Execute a LogQL metric query returning a matrix (time-series) result."""
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{self.base_url}/loki/api/v1/query_range",
+                params={"query": query, "start": start, "end": end, "step": step},
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
     async def ready(self) -> bool:
         try:
             async with httpx.AsyncClient() as client:

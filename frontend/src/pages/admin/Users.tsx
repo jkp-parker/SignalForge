@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { usersApi, type User, type UserCreate } from '../../lib/api'
+import { Plus, X } from 'lucide-react'
 
 export default function Users() {
   const queryClient = useQueryClient()
@@ -28,7 +29,7 @@ export default function Users() {
     e.preventDefault()
     const form = new FormData(e.currentTarget)
     createMutation.mutate({
-      email: form.get('email') as string,
+      username: form.get('username') as string,
       password: form.get('password') as string,
       full_name: form.get('full_name') as string,
       role: form.get('role') as string,
@@ -37,46 +38,39 @@ export default function Users() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 700 }}>Users</h2>
-          <p style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', marginTop: '0.25rem' }}>
-            Manage user accounts and roles
-          </p>
+          <h1 className="text-2xl font-bold text-gray-100">Users</h1>
+          <p className="text-sm text-gray-400 mt-1">Manage user accounts and roles</p>
         </div>
-        <button className="btn-primary" onClick={() => setShowForm(!showForm)}>
-          {showForm ? 'Cancel' : 'Add User'}
+        <button
+          className={showForm ? 'btn-secondary' : 'btn-primary'}
+          onClick={() => setShowForm(!showForm)}
+        >
+          {showForm ? <><X className="h-4 w-4" />Cancel</> : <><Plus className="h-4 w-4" />Add User</>}
         </button>
       </div>
 
       {showForm && (
-        <div className="card" style={{ marginBottom: '1.5rem' }}>
-          <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>New User</h3>
+        <div className="card p-6 mb-6">
+          <h3 className="text-sm font-semibold text-gray-200 mb-4">New User</h3>
           <form onSubmit={handleCreate}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+            <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
-                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, marginBottom: '0.375rem', color: 'var(--color-text-secondary)' }}>
-                  Full Name
-                </label>
-                <input name="full_name" required placeholder="John Smith" />
+                <label className="label">Full Name</label>
+                <input name="full_name" className="input" required placeholder="John Smith" />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, marginBottom: '0.375rem', color: 'var(--color-text-secondary)' }}>
-                  Email
-                </label>
-                <input name="email" type="email" required placeholder="john@example.com" />
+                <label className="label">Username</label>
+                <input name="username" className="input" required placeholder="jsmith" />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, marginBottom: '0.375rem', color: 'var(--color-text-secondary)' }}>
-                  Password
-                </label>
-                <input name="password" type="password" required placeholder="Minimum 6 characters" />
+                <label className="label">Password</label>
+                <input name="password" type="password" className="input" required placeholder="Minimum 6 characters" />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, marginBottom: '0.375rem', color: 'var(--color-text-secondary)' }}>
-                  Role
-                </label>
-                <select name="role">
+                <label className="label">Role</label>
+                <select name="role" className="input">
                   <option value="operator">Operator</option>
                   <option value="admin">Admin</option>
                 </select>
@@ -91,43 +85,42 @@ export default function Users() {
 
       <div className="card">
         {isLoading ? (
-          <p style={{ color: 'var(--color-text-secondary)', textAlign: 'center', padding: '2rem' }}>Loading users...</p>
+          <p className="text-sm text-gray-500 text-center py-8">Loading users...</p>
         ) : (
-          <table>
+          <table className="w-full">
             <thead>
-              <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Role</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Actions</th>
+              <tr className="border-b border-gray-700">
+                <th className="table-th">Name</th>
+                <th className="table-th">Username</th>
+                <th className="table-th">Role</th>
+                <th className="table-th">Status</th>
+                <th className="table-th">Created</th>
+                <th className="table-th">Actions</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-gray-700">
               {users.map((u: User) => (
-                <tr key={u.id}>
-                  <td style={{ fontWeight: 500 }}>{u.full_name || '—'}</td>
-                  <td>{u.email}</td>
-                  <td>
-                    <span className={`badge ${u.role === 'admin' ? 'badge-info' : 'badge-success'}`}>
+                <tr key={u.id} className="hover:bg-gray-700/30">
+                  <td className="table-td font-medium">{u.full_name || '—'}</td>
+                  <td className="table-td font-mono text-xs text-gray-400">{u.username}</td>
+                  <td className="table-td">
+                    <span className={`badge ${u.role === 'admin' ? 'badge-info' : 'badge-gray'}`}>
                       {u.role}
                     </span>
                   </td>
-                  <td>
+                  <td className="table-td">
                     <span className={`badge ${u.is_active ? 'badge-success' : 'badge-danger'}`}>
                       {u.is_active ? 'Active' : 'Disabled'}
                     </span>
                   </td>
-                  <td style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)' }}>
+                  <td className="table-td text-gray-500 text-xs">
                     {new Date(u.created_at).toLocaleDateString()}
                   </td>
-                  <td>
+                  <td className="table-td">
                     <button
-                      className="btn-danger"
-                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                      className="btn-danger text-xs py-1 px-2"
                       onClick={() => {
-                        if (confirm(`Delete user "${u.email}"?`)) {
+                        if (confirm(`Delete user "${u.username}"?`)) {
                           deleteMutation.mutate(u.id)
                         }
                       }}

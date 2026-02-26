@@ -28,8 +28,8 @@ export function useAuth() {
     fetchUser()
   }, [fetchUser])
 
-  const login = async (email: string, password: string) => {
-    const { data } = await authApi.login(email, password)
+  const login = async (username: string, password: string) => {
+    const { data } = await authApi.login(username, password)
     localStorage.setItem('token', data.access_token)
     await fetchUser()
     navigate('/')

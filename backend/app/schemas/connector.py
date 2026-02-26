@@ -49,3 +49,7 @@ class ConnectorResponse(ConnectorBase):
 class ConnectorTestResult(BaseModel):
     success: bool
     message: str
+    connection_ms: float | None = None
+    sample_records: list[dict] | None = None
+    normalized_preview: list[dict] | None = None
+    note: str | None = None

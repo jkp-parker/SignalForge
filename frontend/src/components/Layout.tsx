@@ -1,86 +1,119 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { Activity, LayoutDashboard, Plug, Users, Settings, LogOut, ArrowRightLeft, Bell } from 'lucide-react'
 
 export default function Layout() {
   const { user, logout } = useAuth()
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh' }}>
+    <div className="flex h-screen">
       {/* Sidebar */}
-      <nav style={{
-        width: '240px',
-        backgroundColor: 'var(--color-bg-secondary)',
-        borderRight: '1px solid var(--color-border)',
-        padding: '1.5rem 0',
-        display: 'flex',
-        flexDirection: 'column',
-      }}>
-        <div style={{ padding: '0 1.5rem', marginBottom: '2rem' }}>
-          <h1 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--color-primary)' }}>
-            SignalForge
-          </h1>
-          <p style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', marginTop: '0.25rem' }}>
-            SCADA Alarm Platform
-          </p>
+      <nav className="w-56 bg-gray-950 flex flex-col h-screen shrink-0 border-r border-gray-800">
+        <div className="flex items-center gap-2.5 px-4 py-4 border-b border-gray-800">
+          <Activity className="h-5 w-5 text-blue-400 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-white leading-tight">SignalForge</p>
+            <p className="text-xs text-gray-500 leading-tight">SCADA Alarm Platform</p>
+          </div>
         </div>
 
-        <div style={{ flex: 1 }}>
+        <div className="flex-1 overflow-y-auto px-2 py-4 space-y-5">
+          {/* Overview */}
+          <div className="space-y-0.5">
+            <SidebarLink to="/" icon={<LayoutDashboard className="h-4 w-4" />} end>
+              Dashboard
+            </SidebarLink>
+          </div>
+
+          {/* Alarms — visible to all */}
+          <div className="space-y-0.5">
+            <p className="px-3 mb-2 text-xs font-semibold text-gray-600 uppercase tracking-wider">
+              Alarms
+            </p>
+            <SidebarLink to="/alarms/transform" icon={<ArrowRightLeft className="h-4 w-4" />}>
+              Transformation
+            </SidebarLink>
+            <SidebarLink to="/alarms/explorer" icon={<Bell className="h-4 w-4" />} disabled>
+              Explorer
+              <span className="ml-auto text-[10px] text-gray-600">Phase 3</span>
+            </SidebarLink>
+          </div>
+
           {user?.role === 'admin' && (
-            <div style={{ marginBottom: '1.5rem' }}>
-              <div style={{
-                padding: '0 1.5rem',
-                marginBottom: '0.5rem',
-                fontSize: '0.6875rem',
-                fontWeight: 600,
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                color: 'var(--color-text-secondary)',
-              }}>
+            <div className="space-y-0.5">
+              <p className="px-3 mb-2 text-xs font-semibold text-gray-600 uppercase tracking-wider">
                 Admin
-              </div>
-              <SidebarLink to="/admin/connectors">Connectors</SidebarLink>
-              <SidebarLink to="/admin/users">Users</SidebarLink>
-              <SidebarLink to="/admin/settings">Settings</SidebarLink>
+              </p>
+              <SidebarLink to="/admin/connectors" icon={<Plug className="h-4 w-4" />}>
+                Connectors
+              </SidebarLink>
+              <SidebarLink to="/admin/users" icon={<Users className="h-4 w-4" />}>
+                Users
+              </SidebarLink>
+              <SidebarLink to="/admin/settings" icon={<Settings className="h-4 w-4" />}>
+                Settings
+              </SidebarLink>
             </div>
           )}
         </div>
 
-        <div style={{ padding: '0 1rem', borderTop: '1px solid var(--color-border)', paddingTop: '1rem' }}>
-          <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)', marginBottom: '0.5rem', padding: '0 0.5rem' }}>
-            {user?.email}
-          </div>
+        <div className="px-4 py-3 border-t border-gray-800">
+          <p className="text-xs text-gray-600 mb-2 truncate">{user?.username}</p>
           <button
             onClick={logout}
-            className="btn-secondary"
-            style={{ width: '100%', fontSize: '0.8125rem' }}
+            className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-300 transition-colors"
           >
+            <LogOut className="h-4 w-4" />
             Sign Out
           </button>
         </div>
       </nav>
 
       {/* Main content */}
-      <main style={{ flex: 1, padding: '2rem', overflow: 'auto' }}>
-        <Outlet />
+      <main className="flex-1 overflow-y-auto bg-gray-900">
+        <div className="p-6">
+          <Outlet />
+        </div>
       </main>
     </div>
   )
 }
 
-function SidebarLink({ to, children }: { to: string; children: React.ReactNode }) {
+function SidebarLink({
+  to,
+  children,
+  icon,
+  end,
+  disabled,
+}: {
+  to: string
+  children: React.ReactNode
+  icon: React.ReactNode
+  end?: boolean
+  disabled?: boolean
+}) {
+  if (disabled) {
+    return (
+      <div className="flex items-center gap-2.5 px-3 py-2 text-sm rounded-md text-gray-600 cursor-not-allowed">
+        {icon}
+        {children}
+      </div>
+    )
+  }
+
   return (
     <NavLink
       to={to}
-      style={({ isActive }) => ({
-        display: 'block',
-        padding: '0.5rem 1.5rem',
-        fontSize: '0.875rem',
-        color: isActive ? 'var(--color-text)' : 'var(--color-text-secondary)',
-        backgroundColor: isActive ? 'var(--color-bg-tertiary)' : 'transparent',
-        borderRight: isActive ? '3px solid var(--color-primary)' : '3px solid transparent',
-        transition: 'all 0.15s',
-      })}
+      end={end}
+      className={({ isActive }) =>
+        `flex items-center gap-2.5 px-3 py-2 text-sm rounded-md transition-colors ${
+          isActive
+            ? 'bg-blue-600 text-white'
+            : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+        }`
+      }
     >
+      {icon}
       {children}
     </NavLink>
   )

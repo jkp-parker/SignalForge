@@ -12,10 +12,10 @@ from app.models.user import User
 
 async def create_admin_user():
     async with async_session() as session:
-        result = await session.execute(select(User).where(User.email == settings.ADMIN_EMAIL))
+        result = await session.execute(select(User).where(User.username == settings.ADMIN_USERNAME))
         if result.scalar_one_or_none() is None:
             admin = User(
-                email=settings.ADMIN_EMAIL,
+                username=settings.ADMIN_USERNAME,
                 hashed_password=get_password_hash(settings.ADMIN_PASSWORD),
                 full_name="Admin",
                 role="admin",

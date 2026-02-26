@@ -100,13 +100,59 @@ async def test_connector(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_current_admin),
 ):
+    import asyncio
+    import time
+
     result = await db.execute(select(Connector).where(Connector.id == connector_id))
     connector = result.scalar_one_or_none()
     if not connector:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
 
-    # Phase 1: stub test — real connector testing comes in Phase 2
+    # 1. TCP connectivity test
+    connected = False
+    latency_ms: float | None = None
+    conn_message: str
+
+    start = time.monotonic()
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(connector.host, connector.port),
+            timeout=5.0,
+        )
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        latency_ms = round((time.monotonic() - start) * 1000, 1)
+        connected = True
+        conn_message = f"TCP handshake successful — {connector.host}:{connector.port} ({latency_ms:.0f}ms)"
+    except asyncio.TimeoutError:
+        conn_message = f"Connection timed out — {connector.host}:{connector.port} did not respond within 5s"
+    except ConnectionRefusedError:
+        conn_message = f"Connection refused — no service listening on {connector.host}:{connector.port}"
+    except OSError as exc:
+        conn_message = f"Network error connecting to {connector.host}:{connector.port}: {exc}"
+
+    # 2. Simulated data poll using vendor sample data + current field mapping
+    from app.api.transform import SAMPLE_DATA, DEFAULT_MAPPINGS, _apply_mapping
+
+    sample_data = SAMPLE_DATA.get(connector.connector_type, [])
+    mapping = {
+        **DEFAULT_MAPPINGS.get(connector.connector_type, {}),
+        **(connector.label_mappings or {}),
+    }
+    normalized = _apply_mapping(sample_data, mapping)
+
     return ConnectorTestResult(
-        success=False,
-        message=f"Connector test for type '{connector.connector_type}' not yet implemented. Will be available in Phase 2.",
+        success=connected,
+        message=conn_message,
+        connection_ms=latency_ms,
+        sample_records=sample_data[:3],
+        normalized_preview=normalized[:3],
+        note=(
+            "Data poll is simulated using vendor-specific sample records. "
+            "Live polling from the SCADA system will be available in Phase 2 "
+            "when the connector implementation is complete."
+        ),
     )

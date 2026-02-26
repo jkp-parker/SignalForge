@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change-me-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
-    ADMIN_EMAIL: str = "admin@signalforge.local"
+    ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "admin123"
     LOKI_URL: str = "http://loki:3100"
 

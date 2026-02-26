@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { healthApi } from '../../lib/api'
+import { ExternalLink, CheckCircle2, XCircle } from 'lucide-react'
 
 export default function Settings() {
   const { data: health, isLoading } = useQuery({
@@ -10,77 +11,91 @@ export default function Settings() {
 
   return (
     <div>
-      <div style={{ marginBottom: '1.5rem' }}>
-        <h2 style={{ fontSize: '1.5rem', fontWeight: 700 }}>Settings</h2>
-        <p style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', marginTop: '0.25rem' }}>
-          System status and configuration
-        </p>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-100">Settings</h1>
+        <p className="text-sm text-gray-400 mt-1">System status and configuration</p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
-        <div className="card">
-          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            System Status
-          </div>
-          <div style={{ fontSize: '1.25rem', fontWeight: 700 }}>
-            {isLoading ? '...' : (
-              <span style={{ color: health?.status === 'healthy' ? 'var(--color-success)' : 'var(--color-warning)' }}>
-                {health?.status || 'Unknown'}
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="card">
-          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Database
-          </div>
-          <div style={{ fontSize: '1.25rem', fontWeight: 700 }}>
-            {isLoading ? '...' : (
-              <span style={{ color: health?.database === 'connected' ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                {health?.database || 'Unknown'}
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="card">
-          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Loki
-          </div>
-          <div style={{ fontSize: '1.25rem', fontWeight: 700 }}>
-            {isLoading ? '...' : (
-              <span style={{ color: health?.loki === 'connected' ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                {health?.loki || 'Unknown'}
-              </span>
-            )}
-          </div>
-        </div>
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <StatCard
+          label="System Status"
+          value={isLoading ? '...' : (health?.status || 'Unknown')}
+          ok={health?.status === 'healthy'}
+        />
+        <StatCard
+          label="Database"
+          value={isLoading ? '...' : (health?.database || 'Unknown')}
+          ok={health?.database === 'connected'}
+        />
+        <StatCard
+          label="Loki"
+          value={isLoading ? '...' : (health?.loki || 'Unknown')}
+          ok={health?.loki === 'connected'}
+        />
       </div>
 
-      <div className="card">
-        <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>About SignalForge</h3>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--color-border)' }}>
-            <span style={{ color: 'var(--color-text-secondary)' }}>Version</span>
-            <span>0.1.0</span>
+      <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="card p-6">
+          <h3 className="text-sm font-semibold text-gray-200 mb-4">Services</h3>
+          <div className="space-y-3">
+            <ServiceRow label="PostgreSQL" status={health?.database ?? '—'} ok={health?.database === 'connected'} />
+            <ServiceRow label="Loki" status={health?.loki ?? '—'} ok={health?.loki === 'connected'} />
+            <ServiceRow label="Backend API" status={health?.status ?? '—'} ok={health?.status === 'healthy'} />
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--color-border)' }}>
-            <span style={{ color: 'var(--color-text-secondary)' }}>Architecture</span>
-            <span>FastAPI + React + Loki + Grafana</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--color-border)' }}>
-            <span style={{ color: 'var(--color-text-secondary)' }}>ISA-18.2 Engine</span>
-            <span style={{ color: 'var(--color-text-secondary)' }}>Phase 4 — Not yet active</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0' }}>
-            <span style={{ color: 'var(--color-text-secondary)' }}>Grafana</span>
-            <span>
-              <a href="http://localhost:3001" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-primary)' }}>
-                Open Grafana (port 3001)
+        </div>
+
+        <div className="card p-6">
+          <h3 className="text-sm font-semibold text-gray-200 mb-4">About SignalForge</h3>
+          <div className="divide-y divide-gray-700 text-sm">
+            <InfoRow label="Version" value="0.1.0" />
+            <InfoRow label="Architecture" value="FastAPI + React + Loki + Grafana" />
+            <InfoRow label="ISA-18.2 Engine" value="Phase 4 — not yet active" muted />
+            <div className="flex justify-between items-center py-2.5">
+              <span className="text-gray-500">Grafana</span>
+              <a
+                href="http://localhost:3001"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 text-blue-400 hover:text-blue-300 font-medium"
+              >
+                Open Grafana
+                <ExternalLink className="h-3.5 w-3.5" />
               </a>
-            </span>
+            </div>
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+function StatCard({ label, value, ok }: { label: string; value: string; ok?: boolean }) {
+  const valueColor = ok === undefined ? 'text-gray-400' : ok ? 'text-green-400' : 'text-red-400'
+  return (
+    <div className="card p-5">
+      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{label}</div>
+      <div className={`text-xl font-bold ${valueColor}`}>{value}</div>
+    </div>
+  )
+}
+
+function ServiceRow({ label, status, ok }: { label: string; status: string; ok: boolean }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-sm text-gray-400">{label}</span>
+      <div className="flex items-center gap-1.5">
+        {ok ? <CheckCircle2 className="h-4 w-4 text-green-400" /> : <XCircle className="h-4 w-4 text-red-400" />}
+        <span className={`text-sm ${ok ? 'text-green-400' : 'text-red-400'}`}>{status}</span>
+      </div>
+    </div>
+  )
+}
+
+function InfoRow({ label, value, muted }: { label: string; value: string; muted?: boolean }) {
+  return (
+    <div className="flex justify-between items-center py-2.5">
+      <span className="text-gray-500">{label}</span>
+      <span className={muted ? 'text-gray-600' : 'text-gray-300'}>{value}</span>
     </div>
   )
 }

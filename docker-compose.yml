@@ -23,11 +23,7 @@ services:
       - ./loki/loki-config.yml:/etc/loki/local-config.yaml
       - loki_data:/loki
     command: -config.file=/etc/loki/local-config.yaml
-    healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --output-document=- http://localhost:3100/ready || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    restart: on-failure
 
   grafana:
     image: grafana/grafana:main-ubuntu
@@ -42,7 +38,7 @@ services:
       - grafana_data:/var/lib/grafana
     depends_on:
       loki:
-        condition: service_healthy
+        condition: service_started
 
   backend:
     build: ./backend
@@ -51,14 +47,14 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-signalforge}:${POSTGRES_PASSWORD:-signalforge_dev}@postgres:5432/${POSTGRES_DB:-signalforge}
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@signalforge.local}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       LOKI_URL: http://loki:3100
     depends_on:
       postgres:
         condition: service_healthy
       loki:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')\""]
       interval: 10s
@@ -74,7 +70,7 @@ services:
       postgres:
         condition: service_healthy
       loki:
-        condition: service_healthy
+        condition: service_started
 
   frontend:
     build: ./frontend

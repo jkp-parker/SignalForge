@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { connectorsApi, type Connector, type ConnectorCreate } from '../../lib/api'
+import { Plus, X, ChevronRight } from 'lucide-react'
 
 const CONNECTOR_TYPES = [
   { value: 'ignition', label: 'Ignition' },
@@ -48,62 +49,51 @@ export default function Connectors() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 700 }}>Connectors</h2>
-          <p style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', marginTop: '0.25rem' }}>
-            Manage SCADA data source connections
-          </p>
+          <h1 className="text-2xl font-bold text-gray-100">Connectors</h1>
+          <p className="text-sm text-gray-400 mt-1">Manage SCADA data source connections</p>
         </div>
-        <button className="btn-primary" onClick={() => setShowForm(!showForm)}>
-          {showForm ? 'Cancel' : 'Add Connector'}
+        <button
+          className={showForm ? 'btn-secondary' : 'btn-primary'}
+          onClick={() => setShowForm(!showForm)}
+        >
+          {showForm ? <><X className="h-4 w-4" />Cancel</> : <><Plus className="h-4 w-4" />Add Connector</>}
         </button>
       </div>
 
       {showForm && (
-        <div className="card" style={{ marginBottom: '1.5rem' }}>
-          <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>New Connector</h3>
+        <div className="card p-6 mb-6">
+          <h3 className="text-sm font-semibold text-gray-200 mb-4">New Connector</h3>
           <form onSubmit={handleCreate}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+            <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
-                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, marginBottom: '0.375rem', color: 'var(--color-text-secondary)' }}>
-                  Name
-                </label>
-                <input name="name" required placeholder="e.g. Plant A Ignition" />
+                <label className="label">Name</label>
+                <input name="name" className="input" required placeholder="e.g. Plant A Ignition" />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, marginBottom: '0.375rem', color: 'var(--color-text-secondary)' }}>
-                  Type
-                </label>
-                <select name="connector_type" required>
+                <label className="label">Type</label>
+                <select name="connector_type" className="input" required>
                   {CONNECTOR_TYPES.map((t) => (
                     <option key={t.value} value={t.value}>{t.label}</option>
                   ))}
                 </select>
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, marginBottom: '0.375rem', color: 'var(--color-text-secondary)' }}>
-                  Host
-                </label>
-                <input name="host" required placeholder="e.g. 192.168.1.100" />
+                <label className="label">Host</label>
+                <input name="host" className="input" required placeholder="e.g. 192.168.1.100" />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, marginBottom: '0.375rem', color: 'var(--color-text-secondary)' }}>
-                  Port
-                </label>
-                <input name="port" type="number" defaultValue={8088} />
+                <label className="label">Port</label>
+                <input name="port" type="number" className="input" defaultValue={8088} />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, marginBottom: '0.375rem', color: 'var(--color-text-secondary)' }}>
-                  Polling Interval (seconds)
-                </label>
-                <input name="polling_interval" type="number" defaultValue={30} />
+                <label className="label">Polling Interval (seconds)</label>
+                <input name="polling_interval" type="number" className="input" defaultValue={30} />
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, marginBottom: '0.375rem', color: 'var(--color-text-secondary)' }}>
-                  Description
-                </label>
-                <input name="description" placeholder="Optional description" />
+                <label className="label">Description</label>
+                <input name="description" className="input" placeholder="Optional description" />
               </div>
             </div>
             <button type="submit" className="btn-primary" disabled={createMutation.isPending}>
@@ -115,44 +105,46 @@ export default function Connectors() {
 
       <div className="card">
         {isLoading ? (
-          <p style={{ color: 'var(--color-text-secondary)', textAlign: 'center', padding: '2rem' }}>Loading connectors...</p>
+          <p className="text-sm text-gray-500 text-center py-8">Loading connectors...</p>
         ) : connectors.length === 0 ? (
-          <p style={{ color: 'var(--color-text-secondary)', textAlign: 'center', padding: '2rem' }}>
+          <p className="text-sm text-gray-500 text-center py-8">
             No connectors configured. Click "Add Connector" to get started.
           </p>
         ) : (
-          <table>
+          <table className="w-full">
             <thead>
-              <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Host</th>
-                <th>Status</th>
-                <th>Polling</th>
-                <th>Actions</th>
+              <tr className="border-b border-gray-700">
+                <th className="table-th">Name</th>
+                <th className="table-th">Type</th>
+                <th className="table-th">Host</th>
+                <th className="table-th">Status</th>
+                <th className="table-th">Polling</th>
+                <th className="table-th">Actions</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-gray-700">
               {connectors.map((c: Connector) => (
-                <tr key={c.id}>
-                  <td>
+                <tr key={c.id} className="hover:bg-gray-700/30">
+                  <td className="table-td">
                     <button
                       onClick={() => navigate(`/admin/connectors/${c.id}`)}
-                      style={{ background: 'none', padding: 0, color: 'var(--color-primary)', fontWeight: 500 }}
+                      className="flex items-center gap-1 font-medium text-blue-400 hover:text-blue-300"
                     >
                       {c.name}
+                      <ChevronRight className="h-3.5 w-3.5" />
                     </button>
                   </td>
-                  <td>{CONNECTOR_TYPES.find((t) => t.value === c.connector_type)?.label || c.connector_type}</td>
-                  <td style={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}>{c.host}:{c.port}</td>
-                  <td>
+                  <td className="table-td">
+                    {CONNECTOR_TYPES.find((t) => t.value === c.connector_type)?.label || c.connector_type}
+                  </td>
+                  <td className="table-td font-mono text-xs text-gray-400">{c.host}:{c.port}</td>
+                  <td className="table-td">
                     <StatusBadge status={c.status} />
                   </td>
-                  <td>{c.polling_interval}s</td>
-                  <td>
+                  <td className="table-td">{c.polling_interval}s</td>
+                  <td className="table-td">
                     <button
-                      className="btn-danger"
-                      style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                      className="btn-danger text-xs py-1 px-2"
                       onClick={() => {
                         if (confirm(`Delete connector "${c.name}"?`)) {
                           deleteMutation.mutate(c.id)
@@ -173,11 +165,11 @@ export default function Connectors() {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const styles: Record<string, string> = {
+  const cls: Record<string, string> = {
     connected: 'badge-success',
     polling: 'badge-success',
     error: 'badge-danger',
     disconnected: 'badge-warning',
   }
-  return <span className={`badge ${styles[status] || 'badge-info'}`}>{status}</span>
+  return <span className={`badge ${cls[status] || 'badge-info'}`}>{status}</span>
 }
