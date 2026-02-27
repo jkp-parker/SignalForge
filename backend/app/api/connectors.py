@@ -1,5 +1,10 @@
+import asyncio
+import time
+from datetime import datetime, timezone
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -11,6 +16,8 @@ from app.schemas.connector import ConnectorCreate, ConnectorUpdate, ConnectorRes
 router = APIRouter(prefix="/connectors", tags=["connectors"])
 
 VALID_CONNECTOR_TYPES = {"ignition", "factorytalk", "wincc", "plant_scada"}
+
+EVENT_TYPE_LABELS = {0: "Active", 1: "Clear", 2: "Ack"}
 
 
 @router.get("", response_model=list[ConnectorResponse])
@@ -94,65 +101,179 @@ async def delete_connector(
     await db.delete(connector)
 
 
+# ---------------------------------------------------------------------------
+# Alarm journal helpers
+# ---------------------------------------------------------------------------
+
+async def _fetch_journal_events(
+    db: AsyncSession,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Fetch recent alarm events from the journal staging tables."""
+    events_result = await db.execute(
+        text(
+            "SELECT id, eventid, source, displaypath, priority, eventtime, eventtype, eventflags "
+            "FROM alarm_events ORDER BY eventtime DESC LIMIT :lim"
+        ),
+        {"lim": limit},
+    )
+    events = [dict(row._mapping) for row in events_result]
+    if not events:
+        return []
+
+    # Fetch associated properties
+    event_ids = [e["id"] for e in events]
+    data_result = await db.execute(
+        text(
+            "SELECT id, propname, dtype, intvalue, floatvalue, strvalue "
+            "FROM alarm_event_data WHERE id = ANY(:ids)"
+        ),
+        {"ids": event_ids},
+    )
+
+    # Group properties by event id
+    props: dict[int, dict[str, Any]] = {}
+    for row in data_result:
+        r = dict(row._mapping)
+        eid = r["id"]
+        if eid not in props:
+            props[eid] = {}
+        # Pick the right value based on dtype
+        if r["dtype"] == 0:
+            props[eid][r["propname"]] = r["intvalue"]
+        elif r["dtype"] == 1:
+            props[eid][r["propname"]] = r["floatvalue"]
+        else:
+            props[eid][r["propname"]] = r["strvalue"]
+
+    # Merge properties into events
+    for event in events:
+        event_props = props.get(event["id"], {})
+        event["name"] = event_props.get("name", "")
+        event["ackUser"] = event_props.get("ackUser", "")
+        event["eventValue"] = event_props.get("eventValue", "")
+        event["isInitialEvent"] = event_props.get("isInitialEvent", "")
+        event["eventtype_label"] = EVENT_TYPE_LABELS.get(event["eventtype"], str(event["eventtype"]))
+
+    return events
+
+
+async def _get_journal_stats(db: AsyncSession) -> dict[str, Any]:
+    """Get summary stats for the alarm journal staging tables."""
+    count_result = await db.execute(text("SELECT COUNT(*) as cnt FROM alarm_events"))
+    total = count_result.scalar() or 0
+
+    if total == 0:
+        return {"total": 0, "by_type": {}, "earliest": None, "latest": None}
+
+    # Event type breakdown
+    type_result = await db.execute(
+        text("SELECT eventtype, COUNT(*) as cnt FROM alarm_events GROUP BY eventtype")
+    )
+    by_type = {
+        EVENT_TYPE_LABELS.get(row.eventtype, str(row.eventtype)): row.cnt
+        for row in type_result
+    }
+
+    # Time range
+    range_result = await db.execute(
+        text("SELECT MIN(eventtime) as earliest, MAX(eventtime) as latest FROM alarm_events")
+    )
+    range_row = range_result.one()
+
+    return {
+        "total": total,
+        "by_type": by_type,
+        "earliest": range_row.earliest.isoformat() if range_row.earliest else None,
+        "latest": range_row.latest.isoformat() if range_row.latest else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Journal status endpoint (used by setup wizard)
+# ---------------------------------------------------------------------------
+
+@router.get("/journal/status")
+async def journal_status(
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Check if alarm journal data is flowing into our Postgres tables."""
+    try:
+        stats = await _get_journal_stats(db)
+        return {
+            "has_data": stats["total"] > 0,
+            **stats,
+        }
+    except Exception as exc:
+        return {
+            "has_data": False,
+            "total": 0,
+            "error": str(exc),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Test endpoint
+# ---------------------------------------------------------------------------
+
 @router.post("/{connector_id}/test", response_model=ConnectorTestResult)
 async def test_connector(
     connector_id: str,
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(get_current_admin),
 ):
-    import asyncio
-    import time
-
     result = await db.execute(select(Connector).where(Connector.id == connector_id))
     connector = result.scalar_one_or_none()
     if not connector:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
 
-    # 1. TCP connectivity test
-    connected = False
-    latency_ms: float | None = None
-    conn_message: str
-
+    # Query alarm journal tables in our Postgres
     start = time.monotonic()
     try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(connector.host, connector.port),
-            timeout=5.0,
-        )
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except Exception:
-            pass
+        stats = await _get_journal_stats(db)
         latency_ms = round((time.monotonic() - start) * 1000, 1)
-        connected = True
-        conn_message = f"TCP handshake successful — {connector.host}:{connector.port} ({latency_ms:.0f}ms)"
-    except asyncio.TimeoutError:
-        conn_message = f"Connection timed out — {connector.host}:{connector.port} did not respond within 5s"
-    except ConnectionRefusedError:
-        conn_message = f"Connection refused — no service listening on {connector.host}:{connector.port}"
-    except OSError as exc:
-        conn_message = f"Network error connecting to {connector.host}:{connector.port}: {exc}"
+    except Exception as exc:
+        return ConnectorTestResult(
+            success=False,
+            message=f"Error querying alarm journal tables: {exc}",
+            note="Ensure the alarm_events and alarm_event_data tables exist (run migrations).",
+        )
 
-    # 2. Simulated data poll using vendor sample data + current field mapping
-    from app.api.transform import SAMPLE_DATA, DEFAULT_MAPPINGS, _apply_mapping
+    if stats["total"] == 0:
+        return ConnectorTestResult(
+            success=True,
+            message="Alarm journal tables exist but contain no data",
+            connection_ms=latency_ms,
+            note=(
+                "No alarm events found. Configure the Ignition alarm journal "
+                "to write to this PostgreSQL database, then trigger some alarms."
+            ),
+        )
 
-    sample_data = SAMPLE_DATA.get(connector.connector_type, [])
-    mapping = {
-        **DEFAULT_MAPPINGS.get(connector.connector_type, {}),
-        **(connector.label_mappings or {}),
-    }
-    normalized = _apply_mapping(sample_data, mapping)
+    # Fetch sample events
+    sample_events = await _fetch_journal_events(db, limit=50)
 
+    # Normalize with transform logic
+    from app.api.transform import DEFAULT_MAPPINGS, _apply_mapping
+    saved = dict(connector.label_mappings or {})
+    saved.pop("_export_enabled", None)
+    mapping = {**DEFAULT_MAPPINGS.get(connector.connector_type, {}), **saved}
+    normalized = _apply_mapping(sample_events, mapping) if sample_events else []
+
+    # Build message
+    type_parts = [f"{count} {label}" for label, count in stats["by_type"].items()]
     return ConnectorTestResult(
-        success=connected,
-        message=conn_message,
-        connection_ms=latency_ms,
-        sample_records=sample_data[:3],
-        normalized_preview=normalized[:3],
-        note=(
-            "Data poll is simulated using vendor-specific sample records. "
-            "Live polling from the SCADA system will be available in Phase 2 "
-            "when the connector implementation is complete."
+        success=True,
+        message=(
+            f"Found {stats['total']} alarm event(s) in journal — "
+            f"{', '.join(type_parts)}"
         ),
+        connection_ms=latency_ms,
+        sample_records=sample_events[:50],
+        normalized_preview=normalized[:50],
+        note=(
+            f"Alarm journal data from {stats['earliest']} to {stats['latest']}. "
+            f"Events are staged in PostgreSQL before transformation and export to Loki."
+        ) if stats["earliest"] and stats["latest"] else None,
     )

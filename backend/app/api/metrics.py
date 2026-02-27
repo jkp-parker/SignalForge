@@ -70,11 +70,17 @@ async def get_overview(
     # 4. Connector stats from DB
     rows = await db.execute(select(Connector))
     connectors = rows.scalars().all()
+    export_enabled_count = sum(
+        1 for c in connectors
+        if c.enabled and (c.label_mappings or {}).get("_export_enabled", False)
+    )
     connector_stats = {
         "total": len(connectors),
         "connected": sum(1 for c in connectors if c.status in ("connected", "polling")),
         "error": sum(1 for c in connectors if c.status == "error"),
         "disconnected": sum(1 for c in connectors if c.status not in ("connected", "polling", "error")),
+        "enabled": sum(1 for c in connectors if c.enabled),
+        "export_enabled": export_enabled_count,
         "connectors": [
             {
                 "id": c.id,

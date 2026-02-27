@@ -25,6 +25,7 @@ def main():
         seconds=settings.INGESTION_INTERVAL_SECONDS,
         id="ingestion_cycle",
         name="Alarm Ingestion Cycle",
+        misfire_grace_time=30,
     )
 
     scheduler.add_job(
@@ -33,6 +34,7 @@ def main():
         minutes=settings.ISA182_ANALYSIS_INTERVAL_MINUTES,
         id="isa182_analysis",
         name="ISA-18.2 Analysis Job",
+        misfire_grace_time=60,
     )
 
     def shutdown(signum, frame):

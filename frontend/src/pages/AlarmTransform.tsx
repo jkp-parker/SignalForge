@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { connectorsApi, transformApi, type FieldMapping, type CanonicalEvent } from '../lib/api'
-import { ArrowRight, Save, RotateCcw, CheckCircle2, AlertCircle, ChevronDown } from 'lucide-react'
+import { ArrowRight, Save, RotateCcw, CheckCircle2, AlertCircle, ChevronDown, Filter, X, Power, PowerOff } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
 // Canonical target fields definition
@@ -86,6 +86,8 @@ export default function AlarmTransform() {
   const [mapping, setMapping] = useState<FieldMapping>({})
   const [isDirty, setIsDirty] = useState(false)
   const [savedAt, setSavedAt] = useState<Date | null>(null)
+  const [filters, setFilters] = useState<Record<string, string>>({})
+  const [exportEnabled, setExportEnabled] = useState(false)
 
   const { data: connectors = [] } = useQuery({
     queryKey: ['connectors'],
@@ -105,13 +107,21 @@ export default function AlarmTransform() {
     enabled: !!selectedConnectorId,
   })
 
-  // Sync mapping from server when config loads
+  // Sync mapping + export state from server when config loads
   useEffect(() => {
     if (config?.mapping) {
       setMapping(config.mapping)
       setIsDirty(false)
     }
+    if (config) {
+      setExportEnabled(config.export_enabled ?? false)
+    }
   }, [config])
+
+  // Reset filters when connector changes
+  useEffect(() => {
+    setFilters({})
+  }, [selectedConnectorId])
 
   const saveMutation = useMutation({
     mutationFn: () => transformApi.save(selectedConnectorId, mapping),
@@ -119,6 +129,14 @@ export default function AlarmTransform() {
       queryClient.invalidateQueries({ queryKey: ['transform', selectedConnectorId] })
       setIsDirty(false)
       setSavedAt(new Date())
+    },
+  })
+
+  const toggleExportMutation = useMutation({
+    mutationFn: (enabled: boolean) => transformApi.toggleExport(selectedConnectorId, enabled),
+    onSuccess: (_data, enabled) => {
+      setExportEnabled(enabled)
+      queryClient.invalidateQueries({ queryKey: ['transform', selectedConnectorId] })
     },
   })
 
@@ -135,15 +153,37 @@ export default function AlarmTransform() {
     }
   }
 
-  // Live preview — computed client-side, no server round-trip
-  const preview = useMemo(() => {
-    if (!config?.sample_raw?.length) return []
-    return applyMapping(config.sample_raw, mapping)
-  }, [config?.sample_raw, mapping])
-
   const rawFields = config?.available_fields ?? []
   const rawData = config?.sample_raw ?? []
+
+  // Build unique values per field for filter dropdowns
+  const fieldValues = useMemo(() => {
+    const vals: Record<string, string[]> = {}
+    for (const field of rawFields) {
+      const unique = [...new Set(rawData.map((r) => String(r[field] ?? '')))]
+      unique.sort()
+      vals[field] = unique
+    }
+    return vals
+  }, [rawFields, rawData])
+
+  // Apply filters to raw data
+  const filteredRawData = useMemo(() => {
+    const activeFilters = Object.entries(filters).filter(([, v]) => v !== '')
+    if (activeFilters.length === 0) return rawData
+    return rawData.filter((row) =>
+      activeFilters.every(([field, value]) => String(row[field] ?? '') === value),
+    )
+  }, [rawData, filters])
+
+  // Live preview — computed client-side from filtered data
+  const preview = useMemo(() => {
+    if (!filteredRawData.length) return []
+    return applyMapping(filteredRawData, mapping)
+  }, [filteredRawData, mapping])
+
   const groups = [...new Set(CANONICAL_FIELDS.map((f) => f.group))]
+  const activeFilterCount = Object.values(filters).filter((v) => v !== '').length
 
   return (
     <div>
@@ -156,27 +196,62 @@ export default function AlarmTransform() {
           </p>
         </div>
 
-        {/* Connector selector */}
-        <div className="flex items-center gap-3">
-          <label className="text-sm text-gray-400">Connector:</label>
-          <div className="relative">
-            <select
-              className="input pr-8 appearance-none"
-              value={selectedConnectorId}
-              onChange={(e) => {
-                setSelectedConnectorId(e.target.value)
-                setIsDirty(false)
-              }}
-            >
-              {connectors.length === 0 && <option value="">No connectors configured</option>}
-              {connectors.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.connector_type})
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="absolute right-2 top-2.5 h-4 w-4 text-gray-400 pointer-events-none" />
+        {/* Connector selector + export toggle */}
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <label className="text-sm text-gray-400">Connector:</label>
+            <div className="relative">
+              <select
+                className="input pr-8 appearance-none"
+                value={selectedConnectorId}
+                onChange={(e) => {
+                  setSelectedConnectorId(e.target.value)
+                  setIsDirty(false)
+                }}
+              >
+                {connectors.length === 0 && <option value="">No connectors configured</option>}
+                {connectors.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.connector_type})
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-2 top-2.5 h-4 w-4 text-gray-400 pointer-events-none" />
+            </div>
           </div>
+
+          {selectedConnectorId && (
+            <div className="flex items-center gap-2 border-l border-gray-700 pl-4">
+              <button
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900 ${
+                  exportEnabled ? 'bg-green-600' : 'bg-gray-600'
+                }`}
+                disabled={toggleExportMutation.isPending}
+                onClick={() => toggleExportMutation.mutate(!exportEnabled)}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    exportEnabled ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+              <span className={`text-sm font-medium flex items-center gap-1.5 ${
+                exportEnabled ? 'text-green-400' : 'text-gray-500'
+              }`}>
+                {exportEnabled ? (
+                  <>
+                    <Power className="h-3.5 w-3.5" />
+                    Exporting to Loki
+                  </>
+                ) : (
+                  <>
+                    <PowerOff className="h-3.5 w-3.5" />
+                    Export disabled
+                  </>
+                )}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -202,60 +277,109 @@ export default function AlarmTransform() {
                   Sample records as received from the SCADA system, before any transformation
                 </p>
               </div>
-              <span className="badge badge-gray">{rawData.length} sample records</span>
+              <div className="flex items-center gap-2">
+                {activeFilterCount > 0 && (
+                  <button
+                    className="flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 transition-colors"
+                    onClick={() => setFilters({})}
+                  >
+                    <X className="h-3 w-3" />
+                    Clear {activeFilterCount} filter{activeFilterCount > 1 ? 's' : ''}
+                  </button>
+                )}
+                <span className="badge badge-gray">
+                  {filteredRawData.length}{filteredRawData.length !== rawData.length ? ` / ${rawData.length}` : ''} records
+                </span>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-gray-700">
-                    {rawFields.map((field) => {
-                      const isMapped = Object.values(mapping).includes(field)
-                      const mappedTo = CANONICAL_FIELDS.find(
-                        (cf) => mapping[cf.key] === field,
-                      )
-                      return (
-                        <th
-                          key={field}
-                          className={`table-th py-2 text-xs whitespace-nowrap ${isMapped ? 'text-blue-400' : ''}`}
-                        >
-                          {field}
-                          {isMapped && (
-                            <div className="text-[10px] font-normal text-blue-500/70 normal-case tracking-normal mt-0.5">
-                              → {mappedTo?.label}
-                            </div>
-                          )}
+              <div className="max-h-[480px] overflow-y-auto scrollbar-thin">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 z-10 bg-gray-800">
+                    {/* Filter row */}
+                    <tr className="border-b border-gray-600">
+                      {rawFields.map((field) => (
+                        <th key={`filter-${field}`} className="px-4 py-1.5">
+                          <div className="relative">
+                            <select
+                              className="w-full text-[10px] py-1 pl-1.5 pr-5 rounded border border-gray-700 bg-gray-900 text-gray-400 appearance-none focus:outline-none focus:border-blue-600 truncate"
+                              value={filters[field] ?? ''}
+                              onChange={(e) =>
+                                setFilters((prev) => ({ ...prev, [field]: e.target.value }))
+                              }
+                            >
+                              <option value="">All</option>
+                              {(fieldValues[field] ?? []).map((v) => (
+                                <option key={v} value={v}>
+                                  {v.length > 30 ? v.slice(0, 30) + '...' : v}
+                                </option>
+                              ))}
+                            </select>
+                            <Filter className={`absolute right-1 top-1/2 -translate-y-1/2 h-2.5 w-2.5 pointer-events-none ${
+                              filters[field] ? 'text-amber-400' : 'text-gray-600'
+                            }`} />
+                          </div>
                         </th>
-                      )
-                    })}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-700/50">
-                  {rawData.map((row, ri) => (
-                    <tr key={ri} className="hover:bg-gray-700/20">
+                      ))}
+                    </tr>
+                    {/* Header row */}
+                    <tr className="border-b border-gray-700">
                       {rawFields.map((field) => {
                         const isMapped = Object.values(mapping).includes(field)
-                        const val = row[field]
+                        const mappedTo = CANONICAL_FIELDS.find(
+                          (cf) => mapping[cf.key] === field,
+                        )
                         return (
-                          <td
+                          <th
                             key={field}
-                            className={`table-td py-2 font-mono max-w-[180px] truncate ${
-                              isMapped ? 'text-blue-300' : 'text-gray-400'
-                            }`}
-                            title={String(val ?? '')}
+                            className={`table-th py-2 text-xs whitespace-nowrap ${isMapped ? 'text-blue-400' : ''}`}
                           >
-                            {val === null || val === undefined
-                              ? <span className="text-gray-600 italic">null</span>
-                              : typeof val === 'boolean'
-                              ? <span className={val ? 'text-green-400' : 'text-red-400'}>{String(val)}</span>
-                              : String(val)}
-                          </td>
+                            {field}
+                            {isMapped && (
+                              <div className="text-[10px] font-normal text-blue-500/70 normal-case tracking-normal mt-0.5">
+                                &rarr; {mappedTo?.label}
+                              </div>
+                            )}
+                          </th>
                         )
                       })}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-gray-700/50">
+                    {filteredRawData.map((row, ri) => (
+                      <tr key={ri} className="hover:bg-gray-700/20">
+                        {rawFields.map((field) => {
+                          const isMapped = Object.values(mapping).includes(field)
+                          const val = row[field]
+                          return (
+                            <td
+                              key={field}
+                              className={`table-td py-2 font-mono max-w-[180px] truncate ${
+                                isMapped ? 'text-blue-300' : 'text-gray-400'
+                              }`}
+                              title={String(val ?? '')}
+                            >
+                              {val === null || val === undefined
+                                ? <span className="text-gray-600 italic">null</span>
+                                : typeof val === 'boolean'
+                                ? <span className={val ? 'text-green-400' : 'text-red-400'}>{String(val)}</span>
+                                : String(val)}
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    ))}
+                    {filteredRawData.length === 0 && (
+                      <tr>
+                        <td colSpan={rawFields.length} className="text-center py-6 text-sm text-gray-500">
+                          No records match the current filters
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
 
@@ -334,7 +458,14 @@ export default function AlarmTransform() {
             {/* Canonical preview — 3 cols */}
             <div className="col-span-3 card p-5">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-semibold text-gray-200">Canonical Output Preview</h3>
+                <h3 className="text-sm font-semibold text-gray-200">
+                  Canonical Output Preview
+                  {preview.length > 0 && (
+                    <span className="ml-2 text-gray-600 font-normal">
+                      {preview.length} alarm{preview.length !== 1 ? 's' : ''}
+                    </span>
+                  )}
+                </h3>
                 <span className="text-xs text-gray-500">
                   Live — updates as you configure mappings
                 </span>
@@ -342,10 +473,12 @@ export default function AlarmTransform() {
 
               {preview.length === 0 ? (
                 <div className="flex items-center justify-center h-32 text-sm text-gray-500">
-                  Configure mappings on the left to see the output
+                  {activeFilterCount > 0
+                    ? 'No records match the current filters'
+                    : 'Configure mappings on the left to see the output'}
                 </div>
               ) : (
-                <div className="space-y-3 overflow-y-auto max-h-[520px] pr-1">
+                <div className="space-y-3 overflow-y-auto max-h-[600px] pr-1 scrollbar-thin">
                   {preview.map((event, i) => (
                     <CanonicalCard key={i} event={event} index={i} />
                   ))}

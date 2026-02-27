@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -20,58 +20,81 @@ router = APIRouter(prefix="/connectors", tags=["transform"])
 
 # ---------------------------------------------------------------------------
 # Vendor sample data
-# Field names match what each SCADA system actually produces in its API
+# For Ignition: alarm journal event format (from alarm_events + alarm_event_data)
+# For others: vendor API format (Phase 5 stubs)
 # ---------------------------------------------------------------------------
 
 SAMPLE_DATA: dict[str, list[dict[str, Any]]] = {
     "ignition": [
         {
-            "id": "ALM-2024-00451",
-            "eventTime": "2026-02-26T14:30:00.000Z",
+            "id": 1001,
+            "eventid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "source": "prov:default:/tag:Boiler01/TempAlarm/alarms/HighTemperature",
+            "displaypath": "Plant A/Boiler Room/Boiler01/HighTemperature",
+            "priority": 3,
+            "eventtime": "2026-02-27T08:00:00+00",
+            "eventtype": 0,
+            "eventflags": 0,
             "name": "HighTemperature",
-            "label": "Boiler 01 temperature exceeded 450°F threshold",
-            "severity": "high",
-            "priority": 1,
-            "source": "Boiler01/TempAlarm",
-            "area": "Boiler Room",
-            "displayPath": "Plant A/Boiler Room",
-            "eventState": "Active",
-            "currentValue": 462.5,
-            "setpointValue": 450.0,
-            "ackRequired": True,
-            "shelved": False,
+            "ackUser": "",
+            "eventValue": "462.5",
+            "eventtype_label": "Active",
         },
         {
-            "id": "ALM-2024-00452",
-            "eventTime": "2026-02-26T14:28:15.000Z",
-            "name": "LowPressure",
-            "label": "Pump 02 suction pressure below minimum",
-            "severity": "medium",
+            "id": 1002,
+            "eventid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "source": "prov:default:/tag:Boiler01/TempAlarm/alarms/HighTemperature",
+            "displaypath": "Plant A/Boiler Room/Boiler01/HighTemperature",
+            "priority": 3,
+            "eventtime": "2026-02-27T08:02:00+00",
+            "eventtype": 2,
+            "eventflags": 0,
+            "name": "HighTemperature",
+            "ackUser": "operator1",
+            "eventValue": "462.5",
+            "eventtype_label": "Ack",
+        },
+        {
+            "id": 1003,
+            "eventid": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+            "source": "prov:default:/tag:Pump02/PressureAlarm/alarms/LowPressure",
+            "displaypath": "Plant A/Pump Room/Pump02/LowPressure",
             "priority": 2,
-            "source": "Pump02/PressureAlarm",
-            "area": "Pump Room",
-            "displayPath": "Plant A/Pump Room",
-            "eventState": "Active",
-            "currentValue": 12.3,
-            "setpointValue": 15.0,
-            "ackRequired": True,
-            "shelved": False,
+            "eventtime": "2026-02-27T07:58:15+00",
+            "eventtype": 0,
+            "eventflags": 0,
+            "name": "LowPressure",
+            "ackUser": "",
+            "eventValue": "12.3",
+            "eventtype_label": "Active",
         },
         {
-            "id": "ALM-2024-00453",
-            "eventTime": "2026-02-26T14:15:00.000Z",
+            "id": 1004,
+            "eventid": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+            "source": "prov:default:/tag:Pump02/PressureAlarm/alarms/LowPressure",
+            "displaypath": "Plant A/Pump Room/Pump02/LowPressure",
+            "priority": 2,
+            "eventtime": "2026-02-27T08:05:00+00",
+            "eventtype": 1,
+            "eventflags": 0,
+            "name": "LowPressure",
+            "ackUser": "",
+            "eventValue": "15.1",
+            "eventtype_label": "Clear",
+        },
+        {
+            "id": 1005,
+            "eventid": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+            "source": "prov:default:/tag:Conveyor01/DriveAlarm/alarms/MotorFault",
+            "displaypath": "Plant A/Production Floor/Conveyor01/MotorFault",
+            "priority": 4,
+            "eventtime": "2026-02-27T07:45:00+00",
+            "eventtype": 0,
+            "eventflags": 0,
             "name": "MotorFault",
-            "label": "Conveyor motor drive fault detected",
-            "severity": "critical",
-            "priority": 0,
-            "source": "Conveyor01/DriveAlarm",
-            "area": "Production Floor",
-            "displayPath": "Plant A/Production Floor",
-            "eventState": "Active",
-            "currentValue": 1.0,
-            "setpointValue": 0.0,
-            "ackRequired": True,
-            "shelved": False,
+            "ackUser": "",
+            "eventValue": "1.0",
+            "eventtype_label": "Active",
         },
     ],
     "factorytalk": [
@@ -211,17 +234,16 @@ SAMPLE_DATA: dict[str, list[dict[str, Any]]] = {
 
 DEFAULT_MAPPINGS: dict[str, dict[str, str]] = {
     "ignition": {
-        "timestamp_field": "eventTime",
-        "message_field": "label",
-        "severity_field": "severity",
-        "area_field": "area",
+        "timestamp_field": "eventtime",
+        "message_field": "displaypath",
+        "severity_field": "priority",
+        "area_field": "displaypath",
         "equipment_field": "source",
         "alarm_type_field": "name",
-        "state_field": "eventState",
-        "value_field": "currentValue",
-        "threshold_field": "setpointValue",
+        "state_field": "eventtype_label",
+        "value_field": "eventValue",
         "priority_field": "priority",
-        "vendor_id_field": "id",
+        "vendor_id_field": "eventid",
     },
     "factorytalk": {
         "timestamp_field": "TimeStamp",
@@ -312,9 +334,9 @@ def _apply_mapping(
 
 def _severity_to_isa(severity: str) -> str:
     sev = severity.lower()
-    if sev in ("critical", "high", "fault", "error"):
+    if sev in ("critical", "high", "fault", "error", "4", "3"):
         return "high"
-    if sev in ("warning", "medium", "urgent"):
+    if sev in ("warning", "medium", "urgent", "2"):
         return "medium"
     return "low"
 
@@ -326,6 +348,7 @@ def _severity_to_isa(severity: str) -> str:
 
 class MappingBody(BaseModel):
     mapping: dict[str, str]
+    export_enabled: bool | None = None
 
 
 async def _get_connector(connector_id: str, db: AsyncSession) -> Connector:
@@ -336,18 +359,37 @@ async def _get_connector(connector_id: str, db: AsyncSession) -> Connector:
     return connector
 
 
+async def _fetch_journal_events(db: AsyncSession, limit: int = 50) -> list[dict[str, Any]] | None:
+    """Fetch recent alarm events from the journal staging tables in our Postgres."""
+    try:
+        from app.api.connectors import _fetch_journal_events as fetch
+        events = await fetch(db, limit=limit)
+        return events if events else None
+    except Exception:
+        return None
+
+
 @router.get("/{connector_id}/transform")
 async def get_transform_config(
     connector_id: str,
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    """Return vendor sample data, current field mapping, and a transformed preview."""
+    """Return sample data, current field mapping, and a transformed preview."""
     connector = await _get_connector(connector_id, db)
-    sample_raw = SAMPLE_DATA.get(connector.connector_type, SAMPLE_DATA["ignition"])
+
+    # Try to fetch live journal data for Ignition connectors
+    sample_raw = None
+    if connector.connector_type == "ignition":
+        sample_raw = await _fetch_journal_events(db)
+
+    # Fall back to static sample data
+    if not sample_raw:
+        sample_raw = SAMPLE_DATA.get(connector.connector_type, SAMPLE_DATA["ignition"])
 
     # Use saved mapping if present, otherwise use vendor defaults
-    saved = connector.label_mappings or {}
+    saved = dict(connector.label_mappings or {})
+    export_enabled = saved.pop("_export_enabled", False)
     mapping = {**DEFAULT_MAPPINGS.get(connector.connector_type, {}), **saved}
 
     return {
@@ -357,6 +399,7 @@ async def get_transform_config(
         "mapping": mapping,
         "preview": _apply_mapping(sample_raw, mapping),
         "available_fields": list(sample_raw[0].keys()) if sample_raw else [],
+        "export_enabled": bool(export_enabled),
     }
 
 
@@ -369,6 +412,38 @@ async def save_transform_mapping(
 ):
     """Persist the field mapping configuration for a connector."""
     connector = await _get_connector(connector_id, db)
-    connector.label_mappings = body.mapping
+    label_mappings = dict(body.mapping)
+    if body.export_enabled is not None:
+        label_mappings["_export_enabled"] = body.export_enabled
+    else:
+        # Preserve existing export_enabled state
+        existing = connector.label_mappings or {}
+        if "_export_enabled" in existing:
+            label_mappings["_export_enabled"] = existing["_export_enabled"]
+    connector.label_mappings = label_mappings
     await db.commit()
-    return {"message": "Field mapping saved", "connector_id": connector_id}
+    return {
+        "message": "Field mapping saved",
+        "connector_id": connector_id,
+        "export_enabled": label_mappings.get("_export_enabled", False),
+    }
+
+
+class ExportToggleBody(BaseModel):
+    enabled: bool
+
+
+@router.patch("/{connector_id}/transform/export")
+async def toggle_export(
+    connector_id: str,
+    body: ExportToggleBody,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Enable or disable Loki export for this connector's transform."""
+    connector = await _get_connector(connector_id, db)
+    label_mappings = dict(connector.label_mappings or {})
+    label_mappings["_export_enabled"] = body.enabled
+    connector.label_mappings = label_mappings
+    await db.commit()
+    return {"export_enabled": body.enabled, "connector_id": connector_id}

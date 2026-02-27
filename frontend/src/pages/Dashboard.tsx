@@ -19,16 +19,16 @@ import {
 } from 'lucide-react'
 
 export default function Dashboard() {
-  const { data: metrics } = useQuery({
+  const { data: metrics, dataUpdatedAt } = useQuery({
     queryKey: ['metrics-overview'],
     queryFn: () => metricsApi.overview().then((r) => r.data),
-    refetchInterval: 60_000,
+    refetchInterval: 15_000,
   })
 
   const { data: health } = useQuery({
     queryKey: ['health'],
     queryFn: () => healthApi.check().then((r) => r.data),
-    refetchInterval: 30_000,
+    refetchInterval: 15_000,
   })
 
   const cs = metrics?.connectors
@@ -37,14 +37,14 @@ export default function Dashboard() {
   const bySeverity = metrics?.by_severity ?? []
 
   const scadaLines = [
-    { label: 'Configured', value: String(cs?.total ?? '—') },
-    { label: 'Active', value: cs ? `${cs.connected} / ${cs.total}` : '—', cls: cs?.connected ? 'text-green-400' : 'text-gray-400' },
+    { label: 'Configured', value: String(cs?.total ?? '—'), cls: cs && cs.total === 0 ? 'text-red-400' : undefined },
+    { label: 'Enabled', value: cs ? `${cs.enabled} / ${cs.total}` : '—', cls: cs?.enabled ? 'text-green-400' : 'text-red-400' },
     { label: 'Errors', value: cs ? String(cs.error) : '—', cls: cs?.error ? 'text-red-400' : 'text-gray-400' },
   ]
 
   const signalLines = [
     { label: 'Ingest status', value: cs?.connected ? 'Polling' : 'Idle', cls: cs?.connected ? 'text-green-400' : 'text-yellow-500' },
-    { label: 'Normalizer', value: 'Active' },
+    { label: 'Export', value: cs ? (cs.export_enabled > 0 ? 'Enabled' : 'Disabled') : '—', cls: cs?.export_enabled ? 'text-green-400' : 'text-red-400' },
     { label: 'Poll interval', value: '30s' },
   ]
 
@@ -54,23 +54,35 @@ export default function Dashboard() {
     { label: 'Alarms (24h)', value: totals.last_24h.toLocaleString() },
   ]
 
+  const journal = health?.journal
   const pgLines = [
     { label: 'Status', value: health?.database === 'connected' ? 'Connected' : 'Error', cls: health?.database === 'connected' ? 'text-green-400' : 'text-red-400' },
-    { label: 'Connectors', value: String(cs?.total ?? '—') },
-    { label: 'Users', value: '—' },
+    { label: 'Journal queue', value: journal ? `${journal.events} event${journal.events !== 1 ? 's' : ''}` : '—' },
+    { label: 'Table size', value: journal?.table_size ?? '—' },
   ]
 
   const grafanaLines = [
-    { label: 'Status', value: 'Running' },
+    { label: 'Status', value: health?.grafana === 'connected' ? 'Connected' : 'Error', cls: health?.grafana === 'connected' ? 'text-green-400' : 'text-red-400' },
     { label: 'Datasource', value: 'Loki (auto)' },
     { label: 'Dashboards', value: 'Provisioned' },
   ]
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-100">Dashboard</h1>
-        <p className="text-sm text-gray-400 mt-1">System pipeline overview and alarm analytics</p>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-100">Dashboard</h1>
+          <p className="text-sm text-gray-400 mt-1">System pipeline overview and alarm analytics</p>
+        </div>
+        <div className="text-xs text-gray-500 flex items-center gap-1.5">
+          <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+          Auto-refresh 15s
+          {dataUpdatedAt > 0 && (
+            <span className="text-gray-600 ml-1">
+              &middot; {new Date(dataUpdatedAt).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* ── Pipeline flow ── */}
@@ -84,7 +96,7 @@ export default function Dashboard() {
             <PipelineStage
               icon={<Plug className="h-4 w-4 text-gray-500" />}
               title="SCADA Sources"
-              status={cs ? (cs.connected > 0 ? 'ok' : cs.error > 0 ? 'error' : 'idle') : 'idle'}
+              status={cs ? (cs.total === 0 || cs.enabled === 0 ? 'error' : cs.connected > 0 ? 'ok' : cs.error > 0 ? 'error' : 'idle') : 'idle'}
               lines={scadaLines}
               footer={
                 <Link to="/admin/connectors" className="text-xs text-blue-400 hover:text-blue-300">
@@ -101,7 +113,7 @@ export default function Dashboard() {
             <PipelineStage
               icon={<Cpu className="h-4 w-4 text-gray-500" />}
               title="Signal Service"
-              status={cs?.connected ? 'ok' : 'idle'}
+              status={cs ? (cs.export_enabled > 0 ? 'ok' : 'error') : 'idle'}
               lines={signalLines}
             />
           </div>
@@ -125,7 +137,7 @@ export default function Dashboard() {
             <PipelineStage
               icon={<BarChart3 className="h-4 w-4 text-gray-500" />}
               title="Grafana"
-              status="ok"
+              status={health?.grafana === 'connected' ? 'ok' : health ? 'error' : 'idle'}
               lines={grafanaLines}
               footer={
                 <a

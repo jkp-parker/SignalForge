@@ -7,7 +7,7 @@ class ConnectorBase(BaseModel):
     name: str
     connector_type: str
     description: str = ""
-    host: str
+    host: str = ""
     port: int = 8088
     credentials: dict = {}
     connection_params: dict = {}

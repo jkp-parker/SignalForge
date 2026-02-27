@@ -54,6 +54,7 @@ export const connectorsApi = {
   update: (id: string, data: Partial<ConnectorCreate>) => api.patch<Connector>(`/connectors/${id}`, data),
   delete: (id: string) => api.delete(`/connectors/${id}`),
   test: (id: string) => api.post<ConnectorTestResult>(`/connectors/${id}/test`),
+  journalStatus: () => api.get<JournalStatus>('/connectors/journal/status'),
 }
 
 // Health
@@ -70,8 +71,16 @@ export const metricsApi = {
 export const transformApi = {
   getConfig: (connectorId: string) =>
     api.get<TransformConfig>(`/connectors/${connectorId}/transform`),
-  save: (connectorId: string, mapping: FieldMapping) =>
-    api.patch(`/connectors/${connectorId}/transform`, { mapping }),
+  save: (connectorId: string, mapping: FieldMapping, exportEnabled?: boolean) =>
+    api.patch(`/connectors/${connectorId}/transform`, {
+      mapping,
+      ...(exportEnabled !== undefined ? { export_enabled: exportEnabled } : {}),
+    }),
+  toggleExport: (connectorId: string, enabled: boolean) =>
+    api.patch<{ export_enabled: boolean; connector_id: string }>(
+      `/connectors/${connectorId}/transform/export`,
+      { enabled },
+    ),
 }
 
 // Types
@@ -116,7 +125,7 @@ export interface ConnectorCreate {
   name: string
   connector_type: string
   description?: string
-  host: string
+  host?: string
   port?: number
   credentials?: Record<string, string>
   connection_params?: Record<string, string>
@@ -135,10 +144,24 @@ export interface ConnectorTestResult {
   note: string | null
 }
 
+export interface JournalStatus {
+  has_data: boolean
+  total: number
+  by_type: Record<string, number>
+  earliest: number | null
+  latest: number | null
+  error?: string
+}
+
 export interface HealthStatus {
   status: string
   database: string
   loki: string
+  grafana: string
+  journal: {
+    events: number
+    table_size: string
+  }
 }
 
 export interface FieldMapping {
@@ -185,6 +208,7 @@ export interface TransformConfig {
   mapping: FieldMapping
   preview: CanonicalEvent[]
   available_fields: string[]
+  export_enabled: boolean
 }
 
 export interface MetricsOverview {
@@ -196,6 +220,8 @@ export interface MetricsOverview {
     connected: number
     error: number
     disconnected: number
+    enabled: number
+    export_enabled: number
     connectors: {
       id: string
       name: string

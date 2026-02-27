@@ -12,6 +12,7 @@ class AlarmLabels(BaseModel):
     alarm_type: str = "generic"
     connector_id: str = ""
     isa_priority: str = "low"
+    event_type: str = "active"
 
 
 class AlarmMetadata(BaseModel):
@@ -21,6 +22,8 @@ class AlarmMetadata(BaseModel):
     state: str = "ACTIVE"
     priority: int = 4
     vendor_alarm_id: str = ""
+    event_id: str = ""
+    ack_user: str = ""
     ack_required: bool = True
     shelved: bool = False
 
@@ -33,8 +36,10 @@ class CanonicalAlarmEvent(BaseModel):
     metadata: AlarmMetadata = AlarmMetadata()
 
     def to_loki_payload(self) -> dict[str, Any]:
+        labels = self.labels.model_dump()
+        labels["job"] = "signalforge"
         return {
-            "labels": self.labels.model_dump(),
+            "labels": labels,
             "message": self.message,
             "metadata": self.metadata.model_dump(),
             "timestamp_ns": int(self.timestamp.timestamp() * 1_000_000_000),

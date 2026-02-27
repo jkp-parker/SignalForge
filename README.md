@@ -41,16 +41,26 @@ Database migrations run automatically on first start. The stack is ready in ~60 
 | API docs (Swagger) | http://localhost/docs |
 | Loki API | http://localhost:3100 |
 | Grafana | http://localhost:3001 |
+| PostgreSQL (external access) | `localhost:5432` |
 
 **Default admin:** `admin` / `admin123`
 
-### 4. Load sample data (optional)
+### 4. Connect an Ignition Gateway
 
-```bash
-docker compose exec backend python /app/scripts/seed_sample_data.py
-```
+SignalForge ingests alarms via Ignition's **alarm journal** — Ignition writes alarm state transitions (Active, Clear, Ack) directly to SignalForge's PostgreSQL database. No API keys or REST API configuration required.
 
-This seeds a sample operator account and two example connector configurations (Ignition and FactoryTalk) so the admin UI populates immediately.
+1. In SignalForge, go to **Admin > Connectors** and create a new Ignition connector
+2. The setup wizard walks you through 4 steps:
+   - **Step 1 — Connector Details**: Name, host (for reference), polling interval
+   - **Step 2 — Alarm Journal Setup**: Provides pre-filled JDBC connection details to configure in Ignition's gateway. A "Check for Data" button polls until alarm events appear.
+   - **Step 3 — Test & Preview**: Shows sample alarm events from the journal with raw + canonical side-by-side view
+   - **Step 4 — Transform & Export**: Links to the Transform page to configure field mappings and enable export to Loki
+3. In the Ignition Gateway:
+   - Add a PostgreSQL database connection using the JDBC URL shown in Step 2
+   - Create an alarm journal profile pointing to that connection
+4. Once alarms are journaled, SignalForge automatically ingests, normalizes, pushes to Loki, and cleans up processed events
+
+> **Tip:** Load one of Ignition's sample projects (e.g. the **Oil & Gas** demo) to get a set of preconfigured tags with alarm definitions for testing.
 
 ## Stack
 
@@ -60,67 +70,103 @@ This seeds a sample operator account and two example connector configurations (I
 | `frontend` | React 18 + Vite + D3.js | Admin and operator portals |
 | `backend` | FastAPI + SQLAlchemy | REST API + auth + connector management |
 | `signal-service` | Python + APScheduler | Alarm ingestion engine + ISA-18.2 analysis jobs |
-| `postgres` | PostgreSQL 16 | Connector configs, alarm metadata, user accounts |
+| `postgres` | PostgreSQL 16 | Connector configs, alarm journal staging, user accounts |
 | `loki` | Grafana Loki | Log storage engine for normalized alarm/event data |
 | `grafana` | Grafana (main-ubuntu) | Dashboarding and alarm analysis (auto-provisioned Loki datasource) |
 
 ## Architecture
 
 ```
-┌─────────┐    ┌──────────────┐    ┌──────────────┐
-│  nginx   │───▶│   frontend   │    │   Grafana    │
-│  :80     │    │   :3000      │    │   :3001      │
-│          │───▶│              │    │              │
-│          │    └──────────────┘    └──────┬───────┘
-│          │───▶┌──────────────┐          │
-│          │    │   backend    │          │
-└─────────┘    │   :8000      │          │
-               └──────┬───────┘          │
-                      │                  │
-               ┌──────▼───────┐   ┌──────▼───────┐
-               │   postgres   │   │    loki      │
-               │   :5432      │   │    :3100     │
-               └──────▲───────┘   └──────▲───────┘
-                      │                  │
-               ┌──────┴──────────────────┴───────┐
-               │        signal-service           │
-               │   (APScheduler background jobs) │
-               └─────────────────────────────────┘
+                              ┌──────────────┐
+                              │   Ignition    │
+                              │   Gateway     │
+                              └──────┬───────┘
+                                     │ JDBC (alarm journal)
+                                     ▼
+┌─────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+│  nginx   │───▶│   frontend   │    │   postgres   │    │   Grafana    │
+│  :80     │    │   :3000      │    │   :5432      │    │   :3001      │
+│          │───▶│              │    │              │    │              │
+│          │    └──────────────┘    └──────┬───────┘    └──────┬───────┘
+│          │───▶┌──────────────┐          │                   │
+│          │    │   backend    │◀─────────┤                   │
+└─────────┘    │   :8000      │          │                   │
+               └──────────────┘          │                   │
+                                  ┌──────▼───────┐    ┌──────▼───────┐
+                                  │ signal-svc   │───▶│    loki      │
+                                  │ (APScheduler)│    │    :3100     │
+                                  └──────────────┘    └──────────────┘
 ```
 
-**Data flow:** SCADA system → signal-service connector → normalizer → Loki push API → queryable via backend API or Grafana.
+**Data flow:** Ignition alarm journal → PostgreSQL staging tables → signal-service normalizer → Loki push API → queryable via backend API, dashboard, or Grafana.
+
+**Ingestion cycle** (every 30s by default):
+1. Query `alarm_events` + `alarm_event_data` tables for new journal entries
+2. Normalize each event to the canonical schema (severity, area, equipment, event type)
+3. Push normalized events to Loki with structured labels
+4. Delete processed rows from the staging tables
 
 ## Frontend Features
 
 ### Dashboard
 
-The home page visualises the full signal pipeline as a live status board:
+The home page visualises the full signal pipeline as a live status board with 15-second auto-refresh:
 
-- **Pipeline flow diagram** — four stage boxes (SCADA Sources → Signal Service → Loki → Grafana) with per-service health indicators derived from the `/api/health` endpoint
+- **Pipeline flow diagram** — six stage boxes (SCADA Sources → Signal Service → Loki → Grafana + PostgreSQL + Backend API) with live health indicators:
+  - SCADA Sources: red if no connectors configured or none enabled
+  - Signal Service: red if no connectors have export enabled
+  - Loki, PostgreSQL, Grafana: real health checks against each service
+- **Infrastructure stats** — PostgreSQL journal queue depth and table size for monitoring staging table growth
 - **Alarm rate chart** — D3.js area chart showing hourly alarm ingest over the last 24 hours, sourced from Loki metric queries
 - **Severity donut** — D3.js donut chart breaking alarm volume down by critical / high / medium / low with a centre-total callout
 - **Stat strip** — quick-glance totals for alarms in the last hour and last 24 hours, active connector count, and overall system health
+
+### Connector Setup Wizard
+
+`/admin/connectors/{id}` provides a 4-step guided setup:
+
+- **Step 1 — Connector Details**: Name, host, port, polling interval, enabled toggle
+- **Step 2 — Alarm Journal Database Setup**: Pre-filled JDBC URL, credentials, and table names to copy into Ignition's gateway configuration. "Check for Data" button auto-polls every 5 seconds until events appear.
+- **Step 3 — Test & Preview**: Fetches sample journal events and shows raw vendor data alongside normalized canonical output
+- **Step 4 — Transform & Export**: Links to the Transform page with current export status
 
 ### Alarm Transformation
 
 `/alarms/transform` lets you configure the per-connector field mapping before alarms are written to Loki:
 
-- **Vendor raw data table** — columns from the actual SCADA sample records; mapped columns are highlighted blue with their canonical target name shown below the header
+- **Vendor raw data table** — columns from the actual SCADA journal records; mapped columns are highlighted blue with their canonical target name shown below the header
 - **Mapping editor** — grouped by Core / Labels / Metadata; each canonical field has a dropdown listing every available raw field from the vendor's schema
 - **Live canonical preview** — runs entirely client-side via `useMemo` so the preview updates instantly as you change mappings, no server round-trip needed
+- **Export toggle** — enables/disables the Loki push for each connector independently
 - **Save / Reset** — persists the mapping to `connector.label_mappings`; dirty-state tracking prevents accidental loss of unsaved changes
-- **Schema reference panel** — canonical field definitions and descriptions for quick reference while mapping
 
-### Connector Test
+## Alarm Journal Integration
 
-From the connector detail page the **"Test Connection & Poll"** button:
+SignalForge receives alarm events via Ignition's native **alarm journal** feature. Ignition writes alarm state transitions directly to two PostgreSQL staging tables:
 
-1. Opens a real TCP connection to the configured host:port and measures round-trip latency (5 s timeout)
-2. Runs a simulated data poll against vendor-specific sample records using the connector's current field mapping
-3. Expands an inline result panel showing:
-   - Connection success / failure with latency
-   - Raw vendor records (up to 3)
-   - Canonical Loki output after transformation, side-by-side
+**`alarm_events`** — one row per state transition:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | SERIAL PK | Row ID |
+| `eventid` | VARCHAR(255) | Groups related transitions (Active+Clear+Ack share same eventid) |
+| `source` | TEXT | Tag path |
+| `displaypath` | TEXT | Human-readable alarm path |
+| `priority` | INTEGER | 0=Diagnostic, 1=Low, 2=Medium, 3=High, 4=Critical |
+| `eventtime` | TIMESTAMPTZ | Event timestamp |
+| `eventtype` | INTEGER | 0=Active, 1=Clear, 2=Ack |
+| `eventflags` | INTEGER | Bitmask flags |
+
+**`alarm_event_data`** — key/value properties per event:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER FK | References alarm_events.id |
+| `propname` | VARCHAR(255) | Property name (e.g. "name", "ackUser", "eventValue") |
+| `dtype` | INTEGER | 0=Int, 1=Float, 2=String |
+| `intvalue` / `floatvalue` / `strvalue` | Various | Property value |
+
+After each ingestion cycle, successfully processed events are deleted from these staging tables to prevent unbounded growth.
 
 ## Connector Plugin Architecture
 
@@ -130,18 +176,19 @@ SignalForge uses an abstract base class that all vendor connectors implement:
 class BaseConnector(ABC):
     async def connect(self) -> bool
     async def disconnect(self) -> None
-    async def fetch_alarms(self, since: str | None = None) -> list[dict]
+    async def fetch_alarms(self) -> list[dict]
+    async def cleanup_processed(self, event_ids: list[int]) -> int
     async def health_check(self) -> dict
 ```
 
 | Connector | Vendor | Status |
 |-----------|--------|--------|
-| `ignition` | Inductive Automation Ignition | Phase 2 |
+| `ignition` | Inductive Automation Ignition | **Live** — PostgreSQL alarm journal integration |
 | `factorytalk` | Rockwell Automation FactoryTalk | Phase 5 |
 | `wincc` | Siemens WinCC | Phase 5 |
 | `plant_scada` | AVEVA Plant SCADA (Citect) | Phase 5 |
 
-To add a new connector, subclass `BaseConnector` in `signal-service/connectors/` and implement the four methods.
+To add a new connector, subclass `BaseConnector` in `signal-service/connectors/` and implement the required methods.
 
 ## Canonical Alarm Schema
 
@@ -149,24 +196,28 @@ Every alarm event is normalized to this structure before being pushed to Loki:
 
 ```json
 {
-  "timestamp": "2026-02-25T14:30:00Z",
+  "timestamp": "2026-02-27T08:15:00+00:00",
   "labels": {
     "source": "ignition-plant-a",
-    "severity": "critical",
-    "area": "boiler-room",
-    "equipment": "boiler-01",
-    "alarm_type": "high_temperature",
+    "severity": "high",
+    "area": "Compressor Section",
+    "equipment": "Compressor_01",
+    "alarm_type": "High Pressure",
     "connector_id": "conn-001",
-    "isa_priority": "high"
+    "isa_priority": "high",
+    "event_type": "active",
+    "job": "signalforge"
   },
-  "message": "Boiler 01 temperature exceeded 450°F threshold",
+  "message": "Compressor Section/Compressor_01 High Pressure",
   "metadata": {
     "value": 462.5,
     "threshold": 450.0,
-    "unit": "°F",
+    "unit": "psi",
     "state": "ACTIVE",
-    "priority": 1,
-    "vendor_alarm_id": "ALM-2024-00451",
+    "priority": 3,
+    "vendor_alarm_id": "evt-a1b2c3",
+    "event_id": "evt-a1b2c3",
+    "ack_user": "",
     "ack_required": true,
     "shelved": false
   }
@@ -176,7 +227,8 @@ Every alarm event is normalized to this structure before being pushed to Loki:
 Labels become Loki stream selectors, enabling queries like:
 
 ```logql
-{severity="critical", area="boiler-room"} |= "temperature"
+{job="signalforge", severity="critical", event_type="active"}
+{job="signalforge", event_type="ack"} | json | ack_user != ""
 ```
 
 ## ISA-18.2 Alarm Performance Analysis
@@ -185,14 +237,14 @@ The built-in analysis engine calculates key ISA-18.2 performance indicators from
 
 | KPI | ISA-18.2 Benchmark | Description |
 |-----|-------------------|-------------|
-| Alarm rate | ≤6/operator/hour manageable, >12 overloaded | Average alarms per operator per hour |
+| Alarm rate | <=6/operator/hour manageable, >12 overloaded | Average alarms per operator per hour |
 | Alarm floods | >10 alarms in 10 minutes | Periods of excessive alarm rate |
 | Chattering alarms | >5 transitions in 1 hour | Alarms oscillating between ACTIVE and CLEAR |
 | Stale alarms | Active >24 hours | Alarms stuck in ACTIVE state without resolution |
 | Priority distribution | ~80% low, ~15% medium, ~5% high | Actual vs recommended priority distribution |
 | Bad actors | Top N by frequency | Most frequently alarming points for rationalization |
 
-Analysis runs on a configurable schedule via APScheduler (default: hourly summaries).
+Analysis runs on a configurable schedule via APScheduler (default: every 60 minutes).
 
 ## API Reference
 
@@ -202,7 +254,7 @@ All endpoints are prefixed with `/api`. Full Swagger documentation is available 
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/auth/token` | Login (OAuth2 password flow) → Bearer token |
+| `POST` | `/api/auth/token` | Login (OAuth2 password flow) -> Bearer token |
 | `GET` | `/api/auth/me` | Get current user profile |
 
 ### Connectors (Admin)
@@ -214,9 +266,11 @@ All endpoints are prefixed with `/api`. Full Swagger documentation is available 
 | `GET` | `/api/connectors/{id}` | Get connector details |
 | `PATCH` | `/api/connectors/{id}` | Update connector config |
 | `DELETE` | `/api/connectors/{id}` | Delete a connector |
-| `POST` | `/api/connectors/{id}/test` | TCP test + simulated data poll |
+| `POST` | `/api/connectors/{id}/test` | Test journal data + show normalized preview |
+| `GET` | `/api/connectors/journal/status` | Check alarm journal staging table for data |
 | `GET` | `/api/connectors/{id}/transform` | Get field mapping config and sample preview |
 | `PATCH` | `/api/connectors/{id}/transform` | Save field mapping to connector |
+| `PATCH` | `/api/connectors/{id}/transform/export` | Toggle Loki export on/off |
 
 ### Users (Admin)
 
@@ -239,13 +293,13 @@ All endpoints are prefixed with `/api`. Full Swagger documentation is available 
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/metrics/overview` | Hourly alarm rate (24 h), severity breakdown, connector stats |
+| `GET` | `/api/metrics/overview` | Hourly alarm rate (24h), severity breakdown, connector + export stats |
 
 ### Health
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/health` | System health (database + Loki status) |
+| `GET` | `/api/health` | System health (database, Loki, Grafana, journal table stats) |
 
 ## Configuration
 
@@ -260,6 +314,8 @@ All configuration is via environment variables. See `.env.example` for the full 
 | `ADMIN_USERNAME` | `admin` | Default admin username |
 | `ADMIN_PASSWORD` | `admin123` | Default admin password |
 | `LOKI_URL` | `http://loki:3100` | Loki endpoint |
+| `INGESTION_INTERVAL_SECONDS` | `30` | Alarm journal polling interval |
+| `ISA182_ANALYSIS_INTERVAL_MINUTES` | `60` | ISA-18.2 analysis job interval |
 | `GF_SECURITY_ADMIN_USER` | `admin` | Grafana admin username |
 | `GF_SECURITY_ADMIN_PASSWORD` | `admin` | Grafana admin password |
 
@@ -281,11 +337,11 @@ SignalForge/
 │   │   │   ├── router.py                   # Route aggregator
 │   │   │   ├── auth.py                     # JWT authentication
 │   │   │   ├── users.py                    # User CRUD
-│   │   │   ├── connectors.py               # Connector CRUD + TCP test
-│   │   │   ├── transform.py                # Field mapping config + sample data
+│   │   │   ├── connectors.py              # Connector CRUD + journal data endpoints
+│   │   │   ├── transform.py               # Field mapping config + export toggle
 │   │   │   ├── alarms.py                   # Loki alarm queries
-│   │   │   ├── metrics.py                  # Dashboard metrics (alarm rate, severity)
-│   │   │   └── health.py                   # Health checks
+│   │   │   ├── metrics.py                  # Dashboard metrics (alarm rate, severity, export stats)
+│   │   │   └── health.py                   # Health checks (DB, Loki, Grafana, journal stats)
 │   │   ├── core/
 │   │   │   ├── config.py                   # Pydantic settings
 │   │   │   ├── security.py                 # JWT + bcrypt
@@ -293,27 +349,28 @@ SignalForge/
 │   │   │   └── loki.py                     # Loki HTTP client (push + query)
 │   │   ├── models/                         # SQLAlchemy ORM models
 │   │   └── schemas/                        # Pydantic request/response schemas
-│   ├── migrations/
-│   │   └── versions/
-│   │       ├── 001_initial_schema.py
-│   │       └── 002_rename_email_to_username.py
-│   └── scripts/
-│       └── seed_sample_data.py
+│   └── migrations/
+│       └── versions/
+│           ├── 001_initial_schema.py
+│           ├── 002_rename_email_to_username.py
+│           └── 003_alarm_journal_tables.py  # alarm_events + alarm_event_data staging
 ├── signal-service/
 │   ├── Dockerfile
 │   ├── main.py                             # APScheduler entry point
 │   ├── config.py
+│   ├── db.py                               # Async SQLAlchemy session factory
+│   ├── models.py                           # Minimal ORM models (shared table schema)
 │   ├── connectors/
 │   │   ├── base.py                         # Abstract base connector
-│   │   ├── ignition.py                     # Ignition connector
+│   │   ├── ignition.py                     # Ignition journal connector (Postgres queries)
 │   │   ├── factorytalk.py                  # FactoryTalk stub
 │   │   ├── wincc.py                        # WinCC stub
 │   │   └── plant_scada.py                  # Plant SCADA stub
 │   ├── normalizer/
 │   │   ├── schema.py                       # Canonical alarm event schema
-│   │   └── transform.py                    # Vendor → canonical mapping
+│   │   └── transform.py                    # Journal event → canonical mapping
 │   ├── scheduler/
-│   │   ├── ingestion.py                    # Alarm ingestion job
+│   │   ├── ingestion.py                    # Alarm ingestion + Loki push + cleanup
 │   │   └── isa182_analysis.py              # ISA-18.2 KPI job
 │   └── analyzers/
 │       ├── isa182.py                       # ISA-18.2 KPI engine
@@ -332,15 +389,15 @@ SignalForge/
 │       ├── components/
 │       │   ├── Layout.tsx                  # Sidebar navigation layout
 │       │   └── charts/
-│       │       ├── AlarmRateChart.tsx      # D3 area chart (24 h alarm rate)
+│       │       ├── AlarmRateChart.tsx      # D3 area chart (24h alarm rate)
 │       │       └── SeverityDonut.tsx       # D3 donut chart (severity breakdown)
 │       └── pages/
 │           ├── Login.tsx
-│           ├── Dashboard.tsx               # Pipeline status + D3 charts
+│           ├── Dashboard.tsx               # Live pipeline status + D3 charts (15s refresh)
 │           ├── AlarmTransform.tsx          # Field mapping editor + live preview
 │           └── admin/
-│               ├── Connectors.tsx          # Connector list + create
-│               ├── ConnectorDetail.tsx     # Edit, TCP test, delete connector
+│               ├── Connectors.tsx          # Connector list + platform picker creation
+│               ├── ConnectorDetail.tsx     # 4-step setup wizard
 │               ├── Users.tsx               # User management
 │               └── Settings.tsx            # System health dashboard
 ├── grafana/
@@ -355,11 +412,12 @@ SignalForge/
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| **Phase 1** | Docker Compose stack, backend API with auth & connector CRUD, frontend admin portal, Loki + Grafana, D3 dashboard, alarm transformation UI, enhanced connector test | **Complete** |
-| **Phase 2** | Ignition connector implementation, normalizer pipeline, end-to-end alarm flow | Planned |
-| **Phase 3** | Operator UI — alarm dashboard, explorer (LogQL search), timeline visualization | Planned |
-| **Phase 4** | ISA-18.2 analysis engine — chattering, stale, flooding, distribution KPIs, compliance scorecard | Planned |
-| **Phase 5** | FactoryTalk, WinCC, and Plant SCADA connectors | Planned |
+| **Phase 1** | Docker Compose stack, backend API with auth & connector CRUD, frontend admin portal, Loki + Grafana, D3 dashboard, alarm transformation UI | **Complete** |
+| **Phase 2** | Ignition connector (REST API), API key auth, alarm ingestion pipeline, platform picker UI, scrollable test results with filters | **Complete** |
+| **Phase 3** | Alarm journal ingestion via PostgreSQL, 4-step setup wizard, live pipeline health monitoring, auto-refresh dashboard, export toggle, staging table cleanup | **Complete** |
+| **Phase 4** | Operator UI — alarm dashboard, explorer (LogQL search), timeline visualization | Planned |
+| **Phase 5** | ISA-18.2 analysis engine — chattering, stale, flooding, distribution KPIs, compliance scorecard | Planned |
+| **Phase 6** | FactoryTalk, WinCC, and Plant SCADA connectors | Planned |
 
 ## License
 
